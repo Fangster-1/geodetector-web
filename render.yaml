@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: geodetector-web
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8765"

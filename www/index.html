@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>地理探测器分析与制图平台</title>
+<link rel="stylesheet" href="css/style.css?v=3">
+<script src="lib/echarts.min.js"></script>
+<script src="lib/jszip.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化</span></div>
+  <div id="serverStatus" class="server-status">连接中…</div>
+</header>
+
+<nav class="steps" id="stepNav">
+  <button class="step active" data-page="upload">① 数据上传</button>
+  <button class="step" data-page="stats">② 统计检验</button>
+  <button class="step" data-page="run">③ 地理探测</button>
+  <button class="step" data-page="charts">④ 制图中心</button>
+  <button class="step" data-page="tables">⑤ 结果表格</button>
+</nav>
+
+<main>
+
+<!-- ================= ① 数据上传 ================= -->
+<section id="page-upload" class="page active">
+  <div class="card">
+    <h3>上传数据文件（CSV / Excel，可多选批量）</h3>
+    <div id="dropZone" class="drop-zone">
+      <p>点击选择 或 拖拽文件到此处</p>
+      <p class="hint">支持 .csv .xlsx .xls；批量处理时各文件需包含相同的变量列；空值可用 &lt;空&gt; 表示</p>
+      <input type="file" id="fileInput" multiple accept=".csv,.xlsx,.xls" hidden>
+    </div>
+    <div id="fileList"></div>
+  </div>
+
+  <div class="card" id="varCard" style="display:none">
+    <h3>变量角色设置 <button class="btn btn-sm" id="autoDetectBtn">自动识别 (y / x1~xn)</button></h3>
+    <p class="hint">为每一列指定角色：因变量 Y（仅一个）、连续自变量（参与离散化寻优）、分类自变量（已分级，直接参与）、忽略。</p>
+    <div id="roleTable"></div>
+  </div>
+
+  <div class="card" id="previewCard" style="display:none">
+    <h3>数据预览（前 5 行）</h3>
+    <select id="previewFileSel" class="inp"></select>
+    <div id="previewTable" class="table-wrap"></div>
+  </div>
+</section>
+
+<!-- ================= ② 统计检验 ================= -->
+<section id="page-stats" class="page">
+  <div class="card">
+    <h3>基础统计检验（建议在地理探测前运行）</h3>
+    <div class="row">
+      <label>选择文件：<select id="statsFileSel" class="inp"></select></label>
+      <button class="btn btn-primary" id="runStatsBtn">运行统计检验</button>
+      <button class="btn" id="runStatsAllBtn">批量检验全部文件</button>
+    </div>
+    <div id="statsProgress" class="hint"></div>
+  </div>
+  <div id="statsResultArea" style="display:none">
+    <div class="card"><h3>⚠️ 自动预警</h3><div id="statsWarnings"></div></div>
+    <div class="card"><h3>描述统计与方差检测</h3><div id="descTable" class="table-wrap"></div></div>
+    <div class="card"><h3>共线性检测（VIF）</h3><div id="vifTable" class="table-wrap"></div></div>
+    <div class="card">
+      <h3>相关性分析
+        <select id="corrMethodSel" class="inp inp-sm">
+          <option value="pearson">Pearson</option>
+          <option value="spearman">Spearman</option>
+        </select>
+        <span class="hint">（更多样式自定义请到 ④ 制图中心 → 相关性热图）</span>
+      </h3>
+      <div id="corrQuickChart" style="width:760px;height:560px"></div>
+      <div id="corrTable" class="table-wrap"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ③ 地理探测 ================= -->
+<section id="page-run" class="page">
+  <div class="card">
+    <h3>探测参数</h3>
+    <div class="param-grid">
+      <div>
+        <label class="lbl">离散化方法（自动寻优）</label>
+        <div id="methodChecks">
+          <label><input type="checkbox" value="equal" checked> equal 等间隔</label>
+          <label><input type="checkbox" value="natural" checked> natural 自然断点</label>
+          <label><input type="checkbox" value="quantile" checked> quantile 分位数</label>
+          <label><input type="checkbox" value="geometric" checked> geometric 几何间隔</label>
+          <label><input type="checkbox" value="sd"> sd 标准差</label>
+        </div>
+      </div>
+      <div>
+        <label class="lbl">分级数量范围</label>
+        <div class="row">
+          <input type="number" id="itvMin" class="inp inp-num" value="3" min="2" max="20"> ~
+          <input type="number" id="itvMax" class="inp inp-num" value="8" min="2" max="22">
+        </div>
+        <label class="lbl" style="margin-top:10px">最大样本量（超出随机抽样）</label>
+        <input type="number" id="maxSample" class="inp" value="100000" step="1000">
+        <label class="lbl" style="margin-top:10px">离散化寻优抽样上限</label>
+        <input type="number" id="discSample" class="inp" value="30000" step="5000" min="1000">
+        <p class="hint">natural(Jenks) 等方法对大样本极慢。样本超过此值时，先抽样寻找最优断点，再将断点应用到全量数据探测，结果几乎不受影响。</p>
+      </div>
+      <div>
+        <label class="lbl">数据选项</label>
+        <label><input type="checkbox" id="removeZeroY"> 剔除 Y = 0 的样本</label>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>运行</h3>
+    <div class="row">
+      <label>当前文件：<select id="runFileSel" class="inp"></select></label>
+      <button class="btn btn-primary" id="runOneBtn">▶ 运行当前文件</button>
+      <button class="btn btn-success" id="runAllBtn">⏩ 批量运行全部文件</button>
+      <button class="btn btn-danger" id="stopBtn" disabled>■ 停止</button>
+    </div>
+    <p class="hint">计算在独立子进程中执行，数据量过大时可点击「停止」立即终止，已完成的文件结果保留。</p>
+    <div class="progress-wrap"><div id="runProgress" class="progress-bar"></div></div>
+    <div id="runStatusLine" class="run-status"></div>
+    <pre id="runLog" class="log">等待运行…</pre>
+  </div>
+</section>
+
+<!-- ================= ④ 制图中心 ================= -->
+<section id="page-charts" class="page">
+  <div class="chart-layout">
+    <div class="chart-main">
+      <div class="card chart-toolbar">
+        <label>结果文件：<select id="chartFileSel" class="inp"></select></label>
+        <div class="chart-tabs" id="chartTabs">
+          <button data-ct="factor" class="active">因子探测</button>
+          <button data-ct="interaction">交互探测热图</button>
+          <button data-ct="disc">离散化寻优</button>
+          <button data-ct="eco">生态探测</button>
+          <button data-ct="risk">风险探测</button>
+          <button data-ct="corr">相关性热图</button>
+        </div>
+      </div>
+      <div class="card chart-canvas-card">
+        <div id="chartMsg" class="hint"></div>
+        <div id="chartBox"><div id="mainChart"></div></div>
+      </div>
+    </div>
+    <aside class="style-panel card">
+      <h3>🎨 样式控制台</h3>
+      <div class="row export-row">
+        <button class="btn btn-primary" id="exportPngBtn">导出当前图</button>
+        <button class="btn btn-success" id="exportAllBtn">批量导出全部图 (ZIP)</button>
+      </div>
+      <details open><summary>全局设置（字体与导出）</summary><div id="globalStyleCtrls"></div></details>
+      <details open><summary>本图样式（全部元素可调）</summary><div id="chartStyleCtrls"></div></details>
+      <details><summary>变量显示名映射</summary>
+        <p class="hint">仅影响图表显示，不改变数据。</p>
+        <div id="varNameCtrls"></div>
+      </details>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="resetStyleBtn">恢复自适应默认样式</button>
+      </div>
+    </aside>
+  </div>
+  <div id="hiddenChartHost" style="position:fixed;left:-99999px;top:0"></div>
+</section>
+
+<!-- ================= ⑤ 结果表格 ================= -->
+<section id="page-tables" class="page">
+  <div class="card">
+    <div class="row">
+      <label>结果文件：<select id="tableFileSel" class="inp"></select></label>
+      <button class="btn btn-success" id="exportAllTablesBtn">导出全部文件全部表格 (ZIP)</button>
+    </div>
+    <p class="hint">所有 CSV 均带 UTF-8 BOM，可直接用 Excel 打开。</p>
+  </div>
+  <div id="tablesArea"></div>
+</section>
+
+</main>
+
+<script src="js/charts.js?v=3"></script>
+<script src="js/app.js?v=3"></script>
+</body>
+</html>
