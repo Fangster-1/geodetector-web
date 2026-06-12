@@ -32,7 +32,6 @@ GD 包负责 OPGD 地理探测计算（因子 / 交互 / 生态 / 风险探测 +
 |---|---|
 | Windows 一键启动 | 双击 **`启动网站.bat`**（自动重启服务、轮询端口、打开浏览器） |
 | 手动启动 | `Rscript run_app.R`，然后浏览器访问 <http://127.0.0.1:8765/index.html> |
-| Docker | `docker build -t geodetector-web . && docker run -p 8765:8765 geodetector-web` |
 
 冷启动（R 包加载）约需 15~30 秒；关闭名为 “GD-Server” 的 R 窗口即停止服务。端口可用环境变量 `PORT` 修改（默认 8765）。
 
@@ -63,7 +62,6 @@ GD 包负责 OPGD 地理探测计算（因子 / 交互 / 生态 / 风险探测 +
 geodetector-web/
 ├── run_app.R          # 启动脚本（plumber，端口 8765）
 ├── 启动网站.bat        # Windows 双击启动
-├── Dockerfile         # Docker / Render 部署
 ├── api/
 │   ├── plumber.R      # API 路由（/api/upload /api/panel_split /api/stats /api/run_* ）
 │   └── core.R         # 核心计算：读取/面板解析/清洗/统计检验/optidisc+gd+gdinteract+gdeco+gdrisk
@@ -114,7 +112,6 @@ Frontend libraries (ECharts, JSZip) are vendored in `www/lib/` — no Node.js, n
 |---|---|
 | Windows one-click | Double-click **`启动网站.bat`** (restarts the service, waits for the port, opens the browser) |
 | Manual | `Rscript run_app.R`, then open <http://127.0.0.1:8765/index.html> |
-| Docker | `docker build -t geodetector-web . && docker run -p 8765:8765 geodetector-web` |
 
 Cold start takes 15–30 s (R package loading). Close the “GD-Server” R window to stop. Port is configurable via the `PORT` environment variable (default 8765).
 
@@ -145,7 +142,6 @@ Cold start takes 15–30 s (R package loading). Close the “GD-Server” R wind
 geodetector-web/
 ├── run_app.R          # entry point (plumber, port 8765)
 ├── 启动网站.bat        # Windows one-click launcher
-├── Dockerfile         # Docker / Render deployment
 ├── api/
 │   ├── plumber.R      # API routes (/api/upload /api/panel_split /api/stats /api/run_*)
 │   └── core.R         # core computation: file reading / panel parsing / cleaning / stats / GD detection
