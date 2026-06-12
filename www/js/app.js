@@ -144,6 +144,7 @@ function refreshFileUI() {
   $("#tableFileSel").innerHTML = doneOpts || opts;
   $("#varCard").style.display = S.files.length ? "" : "none";
   $("#previewCard").style.display = S.files.length ? "" : "none";
+  refreshPanelUI();
   renderRoleTable();
   renderPreview();
 }
@@ -152,6 +153,113 @@ window.removeFile = async function (id) {
   S.files = S.files.filter(f => f.id !== id);
   delete S.results[id]; delete S.stats[id];
   refreshFileUI();
+};
+
+/* ---------------- 面板宽表自动解析（变量_年份 → 按年拆分） ---------------- */
+const PANEL = { fileId: null, years: new Set(), y: "", x: [] };  // x: ["d|name"/"s|name"] 按点击顺序
+
+function panelFiles() { return S.files.filter(f => f.panel); }
+
+function refreshPanelUI() {
+  const pf = panelFiles();
+  $("#panelCard").style.display = pf.length ? "" : "none";
+  if (!pf.length) { PANEL.fileId = null; return; }
+  $("#panelFileSel").innerHTML = pf.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  if (!pf.some(f => f.id === PANEL.fileId)) initPanelConfig(pf[0].id);
+  else $("#panelFileSel").value = PANEL.fileId;
+}
+$("#panelFileSel").onchange = e => initPanelConfig(e.target.value);
+
+function initPanelConfig(fileId) {
+  const f = S.files.find(x => x.id === fileId);
+  if (!f || !f.panel) return;
+  PANEL.fileId = fileId;
+  PANEL.years = new Set(f.panel.years);     // 默认全选年份
+  PANEL.y = "";
+  PANEL.x = [];
+  $("#panelFileSel").value = fileId;
+  $("#panelInfo").textContent =
+    `识别到 ${f.panel.years.length} 个年份（${f.panel.years.join("、")}），动态变量 ${f.panel.dynamic_vars.length} 个，静态变量 ${f.panel.static_vars.length} 个`;
+  renderPanelConfig();
+}
+
+function panelOptions(f) {
+  return [
+    ...f.panel.dynamic_vars.map(v => ({ val: "d|" + v, label: `🔄 ${v}`, title: `动态变量（按年取 ${v}_年份 列）` })),
+    ...f.panel.static_vars.map(v => ({ val: "s|" + v, label: `📌 ${v}`, title: "静态变量（各年份取同一列）" }))
+  ];
+}
+
+function renderPanelConfig() {
+  const f = S.files.find(x => x.id === PANEL.fileId);
+  if (!f) return;
+  // 年份 chips
+  $("#panelYears").innerHTML = f.panel.years.map(y =>
+    `<span class="chip ${PANEL.years.has(y) ? "sel" : ""}" data-y="${y}">${y}</span>`).join("");
+  $$("#panelYears .chip").forEach(el => el.onclick = () => {
+    const y = el.dataset.y;
+    PANEL.years.has(y) ? PANEL.years.delete(y) : PANEL.years.add(y);
+    renderPanelConfig();
+  });
+  // Y 下拉
+  const opts = panelOptions(f);
+  $("#panelYSel").innerHTML = `<option value="">(不选择)</option>` +
+    opts.map(o => `<option value="${o.val}" ${PANEL.y === o.val ? "selected" : ""}>${o.label}</option>`).join("");
+  $("#panelYSel").onchange = e => {
+    PANEL.y = e.target.value;
+    PANEL.x = PANEL.x.filter(v => v !== PANEL.y);   // Y 不可同时作为 X
+    renderPanelConfig();
+  };
+  // X chips（带顺序角标）
+  $("#panelXList").innerHTML = opts.filter(o => o.val !== PANEL.y).map(o => {
+    const idx = PANEL.x.indexOf(o.val);
+    return `<span class="chip ${idx >= 0 ? "sel" : ""}" data-v="${o.val}" title="${o.title}">
+      ${idx >= 0 ? `<b class="chip-idx">x${idx + 1}</b>` : ""}${o.label}</span>`;
+  }).join("");
+  $$("#panelXList .chip").forEach(el => el.onclick = () => {
+    const v = el.dataset.v;
+    const i = PANEL.x.indexOf(v);
+    i >= 0 ? PANEL.x.splice(i, 1) : PANEL.x.push(v);
+    renderPanelConfig();
+  });
+  // 映射预览
+  const parts = [];
+  if (PANEL.y) parts.push(`${PANEL.y.slice(2)} → y`);
+  PANEL.x.forEach((v, i) => parts.push(`${v.slice(2)} → x${i + 1}`));
+  $("#panelPreview").innerHTML = parts.length
+    ? `<b>映射预览：</b>${parts.join("　|　")}　（提取年份：${[...PANEL.years].sort().join("、") || "无"}）`
+    : "";
+}
+
+const toSel = v => ({ kind: v[0] === "d" ? "dynamic" : "static", name: v.slice(2) });
+
+$("#panelSplitBtn").onclick = async () => {
+  const f = S.files.find(x => x.id === PANEL.fileId);
+  if (!f) return;
+  if (!PANEL.years.size) { alert("请至少选择一个年份"); return; }
+  if (!PANEL.y && !PANEL.x.length) { alert("请至少选择一个变量（Y 或 X）"); return; }
+  const btn = $("#panelSplitBtn");
+  btn.disabled = true; $("#panelMsg").textContent = "拆分中…";
+  try {
+    const r = await api("/api/panel_split", {
+      id: f.id,
+      years: [...PANEL.years].sort(),
+      y: PANEL.y ? toSel(PANEL.y) : null,
+      x: PANEL.x.map(toSel)
+    });
+    if (!r.ok) throw new Error(r.error);
+    for (const nf of r.files) S.files.push(nf);
+    autoDetectRoles();           // 拆分后的列名为 y, x1~xn，自动识别角色
+    refreshFileUI();
+    let msg = `✓ 已生成 ${r.files.length} 个年度数据集（列已重命名为 y, x1~xn，变量角色已自动设置）`;
+    if (r.skipped && r.skipped.length)
+      msg += `；跳过：${r.skipped.map(s => `${s.year}年(${s.reason})`).join("，")}`;
+    $("#panelMsg").textContent = msg;
+  } catch (e) {
+    $("#panelMsg").textContent = "";
+    alert("拆分失败：" + e.message);
+  }
+  btn.disabled = false;
 };
 
 /* 变量角色 */

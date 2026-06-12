@@ -37,6 +37,75 @@ read_table_file <- function(raw_bytes, filename) {
   df
 }
 
+# ---------------- 面板宽表解析（变量_年份 表头自动识别） ----------------
+# 识别形如 GDP_2015 / pop2020 的列名：拆出基础变量名与年份。
+# 返回 var_map（基础名 -> 年份 -> 实际列名）、静态列、年份列表。
+detect_panel <- function(df) {
+  cols <- colnames(df)
+  var_map <- list()
+  static_vars <- character(0)
+  years_set <- character(0)
+  for (col in cols) {
+    m <- regmatches(col, regexec("^(.*?)_?([0-9]{4})$", col, perl = TRUE))[[1]]
+    yr <- if (length(m) == 3) m[3] else ""
+    base <- if (length(m) == 3) m[2] else ""
+    # 年份需在合理范围内，且基础名非空（避免把纯数字列误判为年份）
+    if (nzchar(base) && nzchar(yr) && as.integer(yr) >= 1900 && as.integer(yr) <= 2099) {
+      years_set <- union(years_set, yr)
+      if (is.null(var_map[[base]])) var_map[[base]] <- list()
+      var_map[[base]][[yr]] <- col
+    } else {
+      static_vars <- c(static_vars, col)
+    }
+  }
+  years <- sort(years_set)
+  list(
+    is_panel = length(var_map) > 0 && length(years) >= 2,
+    years = years,
+    dynamic_vars = sort(names(var_map)),
+    static_vars = static_vars,
+    var_map = var_map
+  )
+}
+
+# 按所选年份拆分面板宽表：y / x 选项格式为 list(kind = "dynamic"|"static", name = ...)
+# 返回 list(datasets = list(year -> data.frame), skipped = list(year -> 缺失说明))
+split_panel <- function(df, panel, years, y_sel, x_sels) {
+  resolve_col <- function(sel, yr) {
+    if (identical(sel$kind, "dynamic")) {
+      cn <- panel$var_map[[sel$name]][[yr]]
+      if (is.null(cn) || !(cn %in% colnames(df))) NULL else cn
+    } else {
+      if (sel$name %in% colnames(df)) sel$name else NULL
+    }
+  }
+  datasets <- list()
+  skipped <- list()
+  for (yr in years) {
+    cols_to_extract <- character(0)
+    new_names <- character(0)
+    missing <- character(0)
+    if (!is.null(y_sel)) {
+      cy <- resolve_col(y_sel, yr)
+      if (is.null(cy)) missing <- c(missing, sprintf("Y(%s)", y_sel$name))
+      else { cols_to_extract <- c(cols_to_extract, cy); new_names <- c(new_names, "y") }
+    }
+    for (i in seq_along(x_sels)) {
+      cx <- resolve_col(x_sels[[i]], yr)
+      if (is.null(cx)) missing <- c(missing, sprintf("X%d(%s)", i, x_sels[[i]]$name))
+      else { cols_to_extract <- c(cols_to_extract, cx); new_names <- c(new_names, paste0("x", i)) }
+    }
+    if (length(missing) > 0) {
+      skipped[[yr]] <- paste("缺少", paste(missing, collapse = ", "))
+      next
+    }
+    d <- df[, cols_to_extract, drop = FALSE]
+    colnames(d) <- new_names
+    datasets[[yr]] <- d
+  }
+  list(datasets = datasets, skipped = skipped)
+}
+
 # ---------------- 数据清洗 ----------------
 clean_data <- function(df, y, x_vars, remove_zero_y = FALSE, max_sample = 100000) {
   all_vars <- c(y, x_vars)

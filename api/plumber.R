@@ -1,5 +1,5 @@
 # ==============================================================
-# 地理探测器网站 - plumber API 路由
+# 地理探测器网站 - plumber API 路由（含面板宽表拆分）
 # ==============================================================
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -33,9 +33,17 @@ function(req) {
       # 预览前 5 行（保证序列化为数组的数组）
       prev <- head(df, 5)
       prev[] <- lapply(prev, as.character)
+      # 面板宽表自动识别（变量_年份 表头，如 GDP_2015 / pop2020）
+      panel <- detect_panel(df)
+      panel_info <- if (isTRUE(panel$is_panel)) {
+        list(years = as.list(panel$years),
+             dynamic_vars = as.list(panel$dynamic_vars),
+             static_vars = as.list(panel$static_vars))
+      } else NULL
       list(
         ok = TRUE, id = id, name = f$name,
         n_rows = nrow(df), columns = as.list(colnames(df)),
+        panel = panel_info,
         preview = lapply(seq_len(nrow(prev)),
                          function(i) as.list(unname(unlist(prev[i, , drop = TRUE]))))
       )
@@ -80,6 +88,47 @@ function(req) {
       intervals = as.integer(unlist(body$intervals))
     )
     list(ok = TRUE, name = f$name, clean_report = cleaned$report, result = res)
+  }, error = function(e) list(ok = FALSE, error = conditionMessage(e)))
+}
+
+#* 面板宽表按年份拆分：选择 Y / X 变量与年份，拆分为各年份数据集并缓存
+#* body: {id, years:[...], y:{kind,name}|null, x:[{kind,name},...]}
+#* @post /api/panel_split
+#* @serializer unboxedJSON
+function(req) {
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  f <- STORE$files[[body$id]]
+  if (is.null(f)) return(list(ok = FALSE, error = "文件不存在，请重新上传。"))
+  tryCatch({
+    panel <- detect_panel(f$data)
+    years <- unlist(body$years)
+    if (length(years) == 0) stop("请至少选择一个年份。")
+    x_sels <- body$x %||% list()
+    if (is.null(body$y) && length(x_sels) == 0) stop("请至少选择一个变量。")
+    sp <- split_panel(f$data, panel, years, body$y, x_sels)
+    if (length(sp$datasets) == 0) {
+      stop(paste0("没有任何年份可拆分。",
+                  paste(sprintf("%s 年: %s", names(sp$skipped), unlist(sp$skipped)),
+                        collapse = "；")))
+    }
+    base <- sub("\\.(csv|xlsx|xls)$", "", f$name, ignore.case = TRUE)
+    out_files <- lapply(names(sp$datasets), function(yr) {
+      d <- sp$datasets[[yr]]
+      id <- paste0("f", format(Sys.time(), "%H%M%S"), "_",
+                   paste(sample(c(letters, 0:9), 6, TRUE), collapse = ""))
+      nm <- sprintf("%s_%s.csv", base, yr)
+      STORE$files[[id]] <- list(name = nm, data = d)
+      prev <- head(d, 5)
+      prev[] <- lapply(prev, as.character)
+      list(ok = TRUE, id = id, name = nm,
+           n_rows = nrow(d), columns = as.list(colnames(d)),
+           preview = lapply(seq_len(nrow(prev)),
+                            function(i) as.list(unname(unlist(prev[i, , drop = TRUE])))))
+    })
+    skipped <- if (length(sp$skipped))
+      lapply(names(sp$skipped), function(yr) list(year = yr, reason = sp$skipped[[yr]]))
+    else list()
+    list(ok = TRUE, files = out_files, skipped = skipped)
   }, error = function(e) list(ok = FALSE, error = conditionMessage(e)))
 }
 

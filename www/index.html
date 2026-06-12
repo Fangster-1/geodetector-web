@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>地理探测器分析与制图平台</title>
-<link rel="stylesheet" href="css/style.css?v=3">
+<link rel="stylesheet" href="css/style.css?v=4">
 <script src="lib/echarts.min.js"></script>
 <script src="lib/jszip.min.js"></script>
 </head>
@@ -35,6 +35,34 @@
       <input type="file" id="fileInput" multiple accept=".csv,.xlsx,.xls" hidden>
     </div>
     <div id="fileList"></div>
+  </div>
+
+  <div class="card" id="panelCard" style="display:none">
+    <h3>📑 面板数据自动解析 <span class="hint">检测到「变量_年份」宽表格式（如 y_2020 / pop2020）</span></h3>
+    <p class="hint">系统已自动分离 <b>动态变量</b>（带年份）与 <b>静态变量</b>（不随时间变化）。选择年份与变量后，一键拆分为各年份数据集，列名自动重命名为 y, x1~xn，可直接进行后续探测。</p>
+    <div class="row">
+      <label>面板文件：<select id="panelFileSel" class="inp"></select></label>
+      <span id="panelInfo" class="hint"></span>
+    </div>
+    <div class="panel-grid">
+      <div>
+        <label class="lbl">① 提取年份</label>
+        <div id="panelYears" class="chip-box"></div>
+      </div>
+      <div>
+        <label class="lbl">② 因变量 Y（单选）</label>
+        <select id="panelYSel" class="inp"></select>
+      </div>
+      <div>
+        <label class="lbl">③ 自变量 X（按点击顺序命名为 x1, x2…）</label>
+        <div id="panelXList" class="chip-box"></div>
+      </div>
+    </div>
+    <div id="panelPreview" class="hint"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn btn-primary" id="panelSplitBtn">🚀 拆分为年度数据集</button>
+      <span id="panelMsg" class="hint"></span>
+    </div>
   </div>
 
   <div class="card" id="varCard" style="display:none">
@@ -181,7 +209,7 @@
 
 </main>
 
-<script src="js/charts.js?v=3"></script>
-<script src="js/app.js?v=3"></script>
+<script src="js/charts.js?v=4"></script>
+<script src="js/app.js?v=4"></script>
 </body>
 </html>
