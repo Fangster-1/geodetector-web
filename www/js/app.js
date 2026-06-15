@@ -100,6 +100,12 @@ function markStepDone(page) {
   }
 })();
 
+/* ---------------- 心跳：浏览器关闭后后端自动停止 ---------------- */
+function heartbeat() { fetch("/api/heartbeat").catch(() => {}); }
+heartbeat();
+setInterval(heartbeat, 3000);
+// 页面切到后台时也继续心跳（setInterval 在后台会被节流但仍维持），关闭页面则停止
+
 /* ================= ① 数据上传 ================= */
 const dz = $("#dropZone"), fi = $("#fileInput");
 dz.onclick = () => fi.click();

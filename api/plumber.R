@@ -10,13 +10,52 @@ source(file.path(APP_ROOT, "api", "core.R"), encoding = "UTF-8")
 STORE <- new.env()
 STORE$files <- list()
 STORE$jobs <- list()
+STORE$last_hb <- NULL       # 最近一次浏览器心跳时间
+STORE$hb_timeout <- 12      # 秒：超过此时长收不到心跳则自动停止后端
+
+# ---- 心跳看门狗：浏览器全部关闭后自动停止后端服务 ----
+# 仅在「曾经收到过心跳」后才会触发，避免启动后还没打开浏览器就退出
+.gd_watchdog <- function() {
+  hb <- STORE$last_hb
+  if (!is.null(hb) && as.numeric(difftime(Sys.time(), hb, units = "secs")) > STORE$hb_timeout) {
+    cat("\n[自动关闭] 检测到浏览器已关闭，正在停止后端服务...\n")
+    try(httpuv::stopAllServers(), silent = TRUE)
+    quit(save = "no", status = 0)
+  }
+  later::later(.gd_watchdog, 4)
+}
+if (requireNamespace("later", quietly = TRUE)) later::later(.gd_watchdog, 5)
 
 #* @apiTitle 地理探测器分析与制图平台 API
+
+# ---- 全局过滤器：禁止缓存，确保每次加载都是最新前端 ----
+#* @filter nocache
+function(req, res) {
+  res$setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+  res$setHeader("Pragma", "no-cache")
+  res$setHeader("Expires", "0")
+  plumber::forward()
+}
+
+#* 首页（显式提供 index.html 并禁缓存，彻底避免浏览器加载旧页面）
+#* @get /
+#* @get /index.html
+#* @serializer html
+function(res) {
+  res$setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+  paste(readLines(file.path(APP_ROOT, "www", "index.html"), warn = FALSE, encoding = "UTF-8"),
+        collapse = "\n")
+}
 
 #* 健康检查
 #* @get /api/ping
 #* @serializer unboxedJSON
 function() list(ok = TRUE, time = format(Sys.time()))
+
+#* 浏览器心跳：维持后端存活；停止心跳即触发自动关闭
+#* @get /api/heartbeat
+#* @serializer unboxedJSON
+function() { STORE$last_hb <- Sys.time(); list(ok = TRUE) }
 
 #* 上传文件（JSON: {files: [{name, b64}]}），解析并缓存
 #* @post /api/upload
