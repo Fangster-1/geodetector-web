@@ -1,168 +1,95 @@
-# 地理探测器分析与制图平台 / GeoDetector Analysis & Plotting Platform
-
-**[中文说明](#中文说明) | [English](#english)**
-
----
-
-## 中文说明
+# 地理探测器分析与制图平台
 
 基于 **R plumber（计算后端）+ ECharts（前端制图）** 的本地网站。计算与绘图彻底分离：
-GD 包负责 OPGD 地理探测计算（因子 / 交互 / 生态 / 风险探测 + 离散化参数寻优），所有图表在浏览器中重写渲染——改样式即时生效、无需重算，并可高分辨率导出。
+GD 包负责探测计算，所有图表在浏览器中重写渲染——改样式即时生效、无需重算，并可高分辨率导出。
 
-### 环境配置
+## 启动方式
 
-1. **安装 R**（建议 ≥ 4.2）：从 [CRAN](https://cran.r-project.org/) 下载安装。
-2. **安装依赖包**（打开 R 或 RStudio 执行一次）：
+双击 **`启动网站.bat`**（自动启动服务并打开浏览器），或手动运行：
 
-   ```r
-   install.packages(c("plumber", "GD", "readxl", "jsonlite", "car", "callr"))
-   ```
+```
+"D:\Program Files\R\R-4.5.2\bin\Rscript.exe" run_app.R
+```
 
-3. **（仅 Windows 启动器）** 用记事本打开 `启动网站.bat`，把顶部 `RSCRIPT=` 行改成你机器上 `Rscript.exe` 的实际路径，例如：
+然后访问 <http://127.0.0.1:8765/index.html>。关闭名为 "GD-Server" 的 R 窗口即停止服务。
 
-   ```bat
-   set "RSCRIPT=D:\Program Files\R\R-4.5.2\bin\Rscript.exe"
-   ```
+### 如果双击 bat 后没反应
 
-前端库（ECharts、JSZip）已本地化到 `www/lib/`，无需 Node.js、无需构建步骤，完全离线可用。
+bat 启动器使用英文提示以避免 Windows 代码页问题。常见情况：
 
-### 启动方式
+1. **浏览器打开后显示"无法访问此网站"** — R 包首次冷启动可能要 15~30 秒，刷新一次即可。bat 已经会自动轮询端口最长 60 秒，正常情况下不会发生
+2. **GD-Server 窗口一闪而过** — 通常是 R 包没装齐。在 R 中执行：`install.packages(c("plumber","GD","readxl","jsonlite","car"))`
+3. **bat 报 `Rscript not found`** — 修改 bat 顶部的 `RSCRIPT=` 行指向你机器上 Rscript.exe 的实际路径
+4. **端口 8765 被占用** — bat 会检测并直接打开浏览器；如需释放端口，结束所有 Rscript.exe 进程后重试
 
-| 方式 | 操作 |
+## 功能总览（按页面流程）
+
+| 页面 | 功能 |
 |---|---|
-| Windows 一键启动 | 双击 **`启动网站.bat`**（自动重启服务、轮询端口、打开浏览器） |
-| 手动启动 | `Rscript run_app.R`，然后浏览器访问 <http://127.0.0.1:8765/index.html> |
+| ① 数据上传 | CSV / Excel 多文件上传（自动识别 UTF-8 / GBK 编码，`<空>` 自动转 NA）；解析过程带**加载动画**；预览显示原始表；变量角色设置基于**去重后的变量基名**（自动剥离列名中的年份、过滤 OBJECTID/Shape/ORIG_FID/FID/Id）；选好 Y/X 后**「拆分为年度数据集」**——检测年份、常量列复制到每年、重命名为 `y/x1…xn` |
+| ② 统计检验 | 描述统计与**方差检测**（零方差预警）、**共线性检测**（VIF + 容忍度，≥5 / ≥10 分级预警）、**相关性分析**（Pearson / Spearman + 显著性），自动汇总预警 |
+| ③ 地理探测 | OPGD 参数（5 种离散化方法 × 自定义分级数范围）、Y=0 剔除、超量随机抽样、**离散化寻优抽样上限**（默认 5 万，大样本加速）；**单数据集 / 批量运行**，独立子进程 + 实时进度 + **可随时停止** |
+| ④ 制图中心 | 6 类图表 + Origin 式样式控制台（每图 36~65 项可调，见下） |
+| ⑤ 结果导出 | **一键导出全部结果**（4 类可选、默认全选）：①按年份整理的训练数据 CSV ②全部图片 ③`数理统计结果.xlsx` ④`地理探测器结果.xlsx`；后两者按结果类型分多个工作表、纵向堆叠所有年份。也可逐表预览并单独导出 CSV |
 
-冷启动（R 包加载）约需 15~30 秒；关闭名为 “GD-Server” 的 R 窗口即停止服务。端口可用环境变量 `PORT` 修改（默认 8765）。
+### 数据上传与拆分流程（ArcGIS 宽表 → 年度训练集）
 
-### 使用教程（按页面流程）
+针对从 ArcGIS 导出的宽表（一张表含多年，列名带年份如 `2000_CES`/`CES2022`，并带 OBJECTID/Shape 等字段）：
 
-**① 数据上传**
+1. 上传原始表，解析时显示加载动画；**预览**区展示完整原始表
+2. **变量角色设置**只显示去重后的变量基名（年份已剥离、ID/几何字段已过滤），在基名上指定 Y 与自变量
+3. 点击**「拆分为年度数据集」**：自动检测年份，为每个年份生成一个 `y, x1…xn` 训练表；没有年份后缀的**常量列**（如高程 dem_r）复制进每一年
+4. 拆分后的数据集进入统计检验、地理探测、制图、导出流程
 
-- 支持 CSV / Excel 多文件批量上传（自动识别 UTF-8 / GBK 编码，`<空>` 自动转 NA）。
-- **面板数据自动解析（宽表拆分）**：若上传的表格表头为「变量_年份」宽表格式（如 `y_2020`、`pop_2024`、`GDP2015`），系统会自动检测并弹出「面板数据自动解析」卡片：
-  1. 系统自动分离 **动态变量**（带年份，如 `tmp`、`pre`、`pop`）与 **静态变量**（不随时间变化，如 `dem`、`Slope`）；
-  2. 勾选要提取的 **年份**（默认全选）；
-  3. 选择 **因变量 Y**（单选，动态或静态均可）；
-  4. 按需要的顺序点击 **自变量 X**——点击顺序即 `x1, x2, x3…` 的命名顺序，再次点击可取消；
-  5. 点击「拆分为年度数据集」：每个年份生成一个数据集（如 `原始表格_2020.csv`），列自动重命名为 `y, x1~xn`，**变量角色同步自动设置**，可直接进行后续统计检验与探测。某年份若缺少所选变量列会自动跳过并提示。
-- 普通（非面板）数据：上传后在「变量角色设置」中为每列指定 Y / 连续X / 分类X / 忽略；列名本身为 `y, x1~xn` 时可一键自动识别。
+## 制图中心（全部为重写实现，不依赖 GD 包原生图）
 
-**② 统计检验**：描述统计与方差检测（零方差预警）、共线性检测（VIF + 容忍度，≥5 / ≥10 分级预警）、相关性分析（Pearson / Spearman + 显著性），自动汇总预警。建议在探测前运行。
+1. **因子探测**：柱状/条形、排序、q 值渐变着色、显著性星号
+2. **交互探测热图**：下三角 + 对角线布局（与原 ggplot 版式一致），q 值标签、双因子增强 `*` / 非线性增强 `**` 标记、色标位置可选、注释行
+3. **离散化寻优**：每个连续变量一个子图，展示 *每种方法 × 每个分级数* 的 q 值全过程曲线，红色标记最优点，子图标题标注「最优: 方法·分级数 q=…」——完整呈现 OPGD 参数寻优过程
+4. **生态探测**：三角显著性矩阵（Y/N 双色）
+5. **风险探测**：分面柱状图（每变量一个面板，分区 Y 均值 + 数值标签）
+6. **相关性热图**：Pearson/Spearman、下三角可选、显著性星号
 
-**③ 地理探测**：OPGD 参数（equal / natural / quantile / geometric / sd 共 5 种离散化方法 × 自定义分级数范围自动寻优）、Y=0 剔除、超量随机抽样。单文件运行或全部文件批量运行，实时进度与日志；计算在独立 R 子进程（callr）中执行，可随时点「停止」终止，已完成结果保留。
+**样式控制台 v2**（所有图初始即按因子数量自适应，之后任意修改）：
 
-**④ 制图中心**：6 类图表（因子探测、交互探测热图、离散化寻优全过程、生态探测、风险探测、相关性热图）+ Origin 式样式控制台——标题 / 坐标轴 / 标签 / 图例色标 / 11 套 SCI 色带 + 自定义色带 / 画布尺寸全部可调，变量显示名映射，样式自动保存。支持当前图导出（PNG / JPG / SVG，分辨率可调）和全部文件 × 全部图表一键打包 ZIP。
+- **全局设置**仅三项：字体（默认中文宋体+英文新罗马混排）、导出格式（PNG/JPG/SVG 矢量）、导出分辨率倍数
+- **每图独立的完整样式集**（24~33 项，分组折叠）：标题（文字/字号/颜色/加粗）、坐标轴（字号/颜色/轴线/刻度/网格线/旋转）、数值标签（字号/颜色/小数位）、图例与色标（字号/位置/长度）、色彩（11 套 SCI 色带 + ★自定义色带编辑器，可加减颜色节点、反转）、画布宽高
+- **坐标轴完整控制（v3 新增）**：每个图的每条坐标轴（X/Y 或 类目/数值）都可独立设置——是否显示坐标轴、轴标题文字/字号/颜色/与轴距离、刻度标签显隐/字号/颜色/旋转角、轴线宽度/颜色、刻度线显隐/长度、网格线显隐/颜色，数值轴还可设最小/最大值。绘图区边距（上下左右）支持自动或手动逐项设定，标题位置（左/中/右 + 垂直偏移）可调
+- 图表专属智能项：交互热图**智能色标定位**（自动放入空白三角区，也可右侧/底部/手动百分比定位）+ 色标长宽 + **外边框**；离散化寻优图**空心/实心数据点**、最优点符号可选、**标注文字智能避让**、子图行距列距可调、刻度字号自动适配面板（可关闭手动设定）、子图标题字号可调；风险探测可统一单色或按变量取色带分色
+- **导出当前图**严格跟随当前查看的图表标签：切到交互热图导出的就是交互热图，文件名自动带图类型与文件名
+- **变量显示名映射**（x1 → 实际因子名，仅影响显示）。样式自动保存（localStorage）
 
-**⑤ 结果表格**：12 类结果表（清洗报告、因子 q 值、综合版交互作用表、生态、离散化最优参数与寻优全过程、风险分区均值与显著性矩阵、统计检验各表），单表导出 CSV（带 UTF-8 BOM，Excel 直接打开）或全部打包 ZIP。
+**导出**：当前图（按全局格式/分辨率设置）；一键批量导出全部文件 × 全部图表 ZIP。
 
-### 项目结构
+**停止功能**：地理探测计算在独立 R 子进程（callr）中执行，前端轮询进度并显示已用时；
+数据量过大时点击「停止」即杀掉子进程立即终止，已完成文件的结果保留，主服务不受影响。
+
+## 项目结构
 
 ```
 geodetector-web/
 ├── run_app.R          # 启动脚本（plumber，端口 8765）
-├── 启动网站.bat        # Windows 双击启动
+├── 启动网站.bat        # 双击启动
 ├── api/
-│   ├── plumber.R      # API 路由（/api/upload /api/panel_split /api/stats /api/run_* ）
-│   └── core.R         # 核心计算：读取/面板解析/清洗/统计检验/optidisc+gd+gdinteract+gdeco+gdrisk
+│   ├── plumber.R      # API 路由（/api/upload /api/stats /api/run）
+│   └── core.R         # 核心计算：读取/清洗/统计检验/optidisc+gd+gdinteract+gdeco+gdrisk
 ├── www/               # 前端（纯静态，无需构建）
 │   ├── index.html
 │   ├── css/style.css
 │   ├── js/charts.js   # 制图引擎：6 类图表的自适应默认值 / 样式 schema / ECharts 构建
-│   ├── js/app.js      # 页面逻辑、面板拆分 UI、API 调用、批量导出
-│   └── lib/           # echarts.min.js, jszip.min.js（本地化，离线可用）
-└── _testdata/         # 本地测试数据（不入库）
+│   ├── js/app.js      # 页面逻辑、上传拆分、API 调用、导出中心
+│   └── lib/           # echarts / jszip / xlsx(SheetJS)（本地化，离线可用）
 ```
 
-### 数据格式要求
+后端 API：`/api/upload` 解析上传、`/api/split` 按列拆分年度数据集、`/api/stats` 统计检验、
+`/api/run_start`+`/api/run_poll`+`/api/run_stop` 可中断的探测任务、`/api/get_csv` 取回训练数据。
 
-- **整理好的数据**：包含因变量列与若干自变量列（列名任意，上传后指定角色；`y, x1~xn` 可自动识别）。
-- **面板宽表**：时间序列变量命名为 `变量名_年份` 或 `变量名年份`（如 `GDP_2015`、`pop2020`），上传后自动进入面板解析流程。
-- 批量处理时各文件需包含相同的变量列；空值可用 `<空>` 表示，含缺失的行自动剔除。
+## 数据格式要求
 
-### 常见问题
+- **方式一（推荐）ArcGIS 宽表**：一张表含多年，列名带年份（`2000_CES`、`CES2022` 均可），可含 OBJECTID/Shape/ORIG_FID 等字段；上传后选 Y/X，点「拆分为年度数据集」自动整理
+- **方式二 已整理表**：直接是 `y, x1, x2 …` 列（无年份）；上传后选好角色，拆分会生成单个数据集
+- 空值可用 `<空>` 表示，含缺失的行自动剔除
 
-1. **浏览器显示“无法访问此网站”**：R 冷启动需 15~30 秒，刷新即可。
-2. **GD-Server 窗口一闪而过**：R 包未装齐，执行 `install.packages(c("plumber","GD","readxl","jsonlite","car","callr"))`。
-3. **bat 报 `Rscript not found`**：修改 bat 顶部 `RSCRIPT=` 为实际路径。
-4. **端口 8765 被占用**：bat 会自动杀掉旧进程重启；手动启动时可设 `PORT` 环境变量换端口。
+## 依赖
 
----
-
-## English
-
-A local web application for **GeoDetector (OPGD) analysis and publication-quality plotting**, built on an **R plumber backend + ECharts frontend**. Computation and plotting are fully decoupled: the R `GD` package performs factor / interaction / ecological / risk detection with optimal discretization parameter search, while all charts are re-rendered in the browser — style changes apply instantly without recomputation, and everything exports at high resolution.
-
-### Environment Setup
-
-1. **Install R** (≥ 4.2 recommended) from [CRAN](https://cran.r-project.org/).
-2. **Install required packages** (run once in R / RStudio):
-
-   ```r
-   install.packages(c("plumber", "GD", "readxl", "jsonlite", "car", "callr"))
-   ```
-
-3. **(Windows launcher only)** Edit `启动网站.bat` and set the `RSCRIPT=` line at the top to your actual `Rscript.exe` path.
-
-Frontend libraries (ECharts, JSZip) are vendored in `www/lib/` — no Node.js, no build step, fully offline-capable.
-
-### Running
-
-| Method | Command |
-|---|---|
-| Windows one-click | Double-click **`启动网站.bat`** (restarts the service, waits for the port, opens the browser) |
-| Manual | `Rscript run_app.R`, then open <http://127.0.0.1:8765/index.html> |
-
-Cold start takes 15–30 s (R package loading). Close the “GD-Server” R window to stop. Port is configurable via the `PORT` environment variable (default 8765).
-
-### Usage Walkthrough
-
-**① Data Upload**
-
-- Batch-upload CSV / Excel files (UTF-8 / GBK auto-detected; `<空>` treated as NA).
-- **Automatic panel-data parsing (wide-table splitting)**: if the uploaded table uses "variable_year" wide-format headers (e.g. `y_2020`, `pop_2024`, `GDP2015`), the app detects it automatically and shows a panel-parsing card:
-  1. Columns are auto-classified into **dynamic variables** (year-suffixed, e.g. `tmp`, `pre`, `pop`) and **static variables** (time-invariant, e.g. `dem`, `Slope`);
-  2. Tick the **years** to extract (all selected by default);
-  3. Pick the **dependent variable Y** (dynamic or static);
-  4. Click **explanatory variables X** in the order you want — the click order becomes `x1, x2, x3…`; click again to deselect;
-  5. Hit "Split into yearly datasets": one dataset per year is created (e.g. `mytable_2020.csv`) with columns renamed to `y, x1~xn`, and variable roles are set automatically — ready for statistics and detection. Years missing a selected column are skipped with a notice.
-- Regular (non-panel) data: assign a role (Y / continuous X / categorical X / ignore) to each column; columns already named `y, x1~xn` can be auto-detected in one click.
-
-**② Statistical Checks**: descriptive statistics with zero-variance warning, multicollinearity check (VIF + tolerance with ≥5 / ≥10 alert levels), correlation analysis (Pearson / Spearman with significance), and an automatic warning summary. Recommended before detection.
-
-**③ GeoDetector Run**: OPGD parameters (5 discretization methods — equal / natural / quantile / geometric / sd — × custom interval-number range, auto-optimized), optional Y=0 removal, random subsampling for oversized data. Run a single file or all files in batch with live progress and logs; computation runs in a separate R subprocess (callr) and can be stopped at any time, keeping finished results.
-
-**④ Plotting Center**: 6 chart types (factor detection, interaction heatmap, discretization optimization process, ecological detection, risk detection, correlation heatmap) with an Origin-style style console — titles / axes / labels / legends & color bars / 11 SCI palettes + custom palette editor / canvas size, plus display-name mapping for variables; styles persist automatically. Export the current chart (PNG / JPG / SVG, adjustable resolution) or batch-export all files × all charts as a ZIP.
-
-**⑤ Result Tables**: 12 result tables (cleaning report, factor q-values, comprehensive interaction table, ecological detection, optimal discretization parameters and full search process, risk-zone means and significance matrix, statistical tables), exportable as single CSVs (UTF-8 BOM, Excel-ready) or one ZIP.
-
-### Project Layout
-
-```
-geodetector-web/
-├── run_app.R          # entry point (plumber, port 8765)
-├── 启动网站.bat        # Windows one-click launcher
-├── api/
-│   ├── plumber.R      # API routes (/api/upload /api/panel_split /api/stats /api/run_*)
-│   └── core.R         # core computation: file reading / panel parsing / cleaning / stats / GD detection
-├── www/               # frontend (pure static, no build step)
-│   ├── index.html
-│   ├── css/style.css
-│   ├── js/charts.js   # chart engine: adaptive defaults / style schema / ECharts builders
-│   ├── js/app.js      # page logic, panel-split UI, API calls, batch export
-│   └── lib/           # echarts.min.js, jszip.min.js (vendored, offline)
-└── _testdata/         # local test data (not committed)
-```
-
-### Data Format
-
-- **Pre-arranged data**: one dependent column plus explanatory columns (any names; assign roles after upload; `y, x1~xn` auto-detected).
-- **Wide-format panel data**: name time-series variables as `name_year` or `nameyear` (e.g. `GDP_2015`, `pop2020`) and the panel parser will take over after upload.
-- For batch processing, all files must share the same columns; missing values can be written as `<空>` and incomplete rows are dropped automatically.
-
-### Troubleshooting
-
-1. **Browser says the site can't be reached** — cold start takes 15–30 s; refresh.
-2. **GD-Server window closes instantly** — missing R packages; run `install.packages(c("plumber","GD","readxl","jsonlite","car","callr"))`.
-3. **`Rscript not found` from the launcher** — fix the `RSCRIPT=` path at the top of the bat file.
-4. **Port 8765 occupied** — the launcher kills the old process automatically; for manual runs set the `PORT` environment variable.
+R 包：`plumber, GD, readxl, jsonlite, car`（均已安装）。前端库已本地化，完全离线可用。

@@ -130,22 +130,6 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 13px; }
 .file-status-ok { color: #1d9a6c; }
 .file-status-err { color: var(--accent); }
 
-/* 面板宽表解析 */
-.panel-grid { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 18px; margin: 10px 0; }
-@media (max-width: 1100px) { .panel-grid { grid-template-columns: 1fr; } }
-.chip-box { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip {
-  display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px;
-  border: 1px solid var(--border); border-radius: 16px; cursor: pointer;
-  font-size: 13px; background: #fff; user-select: none; transition: .15s;
-}
-.chip:hover { border-color: var(--primary); color: var(--primary); }
-.chip.sel { background: var(--primary); border-color: var(--primary); color: #fff; }
-.chip-idx {
-  background: #fff; color: var(--primary); border-radius: 10px;
-  font-size: 11px; padding: 0 6px; font-style: normal;
-}
-
 /* 角色表 */
 .role-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 6px; }
 .role-item { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; }
@@ -172,3 +156,28 @@ details.sub-group[open] summary { color: var(--primary); border-bottom: 1px dash
 
 /* 运行状态行 */
 .run-status { color: var(--primary); font-size: 13px; font-weight: 600; min-height: 20px; margin: 4px 0; }
+
+/* 解析加载动画 */
+.parse-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin: 10px 0; background: #eef5fb; border: 1px solid var(--primary-light); border-radius: 8px; }
+.spinner { width: 22px; height: 22px; border: 3px solid #cfe2f3; border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.parse-row.done { background: #e8f8f0; border-color: #1d9a6c; }
+.parse-row.err { background: #fdeaea; border-color: var(--accent); }
+.parse-text { font-size: 13px; color: var(--text); }
+.parse-bar-wrap { flex: 1; height: 8px; background: #d6e6f5; border-radius: 4px; overflow: hidden; min-width: 120px; }
+.parse-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--primary), var(--primary-light)); transition: width .25s; }
+
+/* 年份信息 */
+.year-info { padding: 8px 12px; margin-bottom: 10px; border-radius: 6px; font-size: 13px; background: #f0f7fd; border: 1px solid var(--primary-light); color: var(--primary); }
+.year-info b { color: var(--accent); }
+
+/* 拆分结果 */
+.split-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.split-item { padding: 8px 14px; border: 1px solid #67c23a; background: #f0f9eb; border-radius: 6px; font-size: 13px; }
+.split-item b { color: #1d9a6c; }
+
+/* 导出中心 */
+.export-center { border: 1px solid var(--primary-light); background: #f8fbfe; }
+.export-opts { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.export-opts label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13.5px; }
+.export-opts input[type="checkbox"] { width: 16px; height: 16px; }

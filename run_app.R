@@ -2,7 +2,6 @@
 # 地理探测器分析与制图平台 - 启动脚本
 # 用法: Rscript run_app.R  （或双击 启动网站.bat）
 # 启动后浏览器访问 http://127.0.0.1:8765
-# 环境变量: PORT（端口，默认 8765）
 # ==============================================================
 suppressMessages(library(plumber))
 
@@ -21,13 +20,10 @@ options(plumber.maxRequestSize = 500 * 1024^2)  # 允许上传大文件
 pr <- plumber::pr(file.path(APP_ROOT, "api", "plumber.R"))
 pr <- plumber::pr_static(pr, "/", file.path(APP_ROOT, "www"))
 
-port <- as.integer(Sys.getenv("PORT", "8765"))
-host <- Sys.getenv("HOST", "127.0.0.1")
-
 cat("\n==============================================\n")
 cat("  地理探测器分析与制图平台已启动\n")
-cat(sprintf("  请在浏览器打开: http://%s:%d/index.html\n", host, port))
+cat("  请在浏览器打开: http://127.0.0.1:8765/index.html\n")
 cat("  (关闭本窗口即停止服务)\n")
 cat("==============================================\n\n")
 
-plumber::pr_run(pr, host = host, port = port, quiet = TRUE)
+plumber::pr_run(pr, host = "127.0.0.1", port = 8765, quiet = TRUE)

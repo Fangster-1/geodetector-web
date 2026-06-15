@@ -28,53 +28,40 @@
 <!-- ================= ① 数据上传 ================= -->
 <section id="page-upload" class="page active">
   <div class="card">
-    <h3>上传数据文件（CSV / Excel，可多选批量）</h3>
+    <h3>上传原始数据表格（CSV / Excel，可多选）</h3>
     <div id="dropZone" class="drop-zone">
       <p>点击选择 或 拖拽文件到此处</p>
-      <p class="hint">支持 .csv .xlsx .xls；批量处理时各文件需包含相同的变量列；空值可用 &lt;空&gt; 表示</p>
+      <p class="hint">支持 .csv .xlsx .xls；可上传 ArcGIS 导出的宽表（列名含年份，如 2000_CES / CES2000）；空值可用 &lt;空&gt; 表示</p>
       <input type="file" id="fileInput" multiple accept=".csv,.xlsx,.xls" hidden>
     </div>
+    <div id="parseStatus"></div>
     <div id="fileList"></div>
   </div>
 
-  <div class="card" id="panelCard" style="display:none">
-    <h3>📑 面板数据自动解析 <span class="hint">检测到「变量_年份」宽表格式（如 y_2020 / pop2020）</span></h3>
-    <p class="hint">系统已自动分离 <b>动态变量</b>（带年份）与 <b>静态变量</b>（不随时间变化）。选择年份与变量后，一键拆分为各年份数据集，列名自动重命名为 y, x1~xn，可直接进行后续探测。</p>
-    <div class="row">
-      <label>面板文件：<select id="panelFileSel" class="inp"></select></label>
-      <span id="panelInfo" class="hint"></span>
-    </div>
-    <div class="panel-grid">
-      <div>
-        <label class="lbl">① 提取年份</label>
-        <div id="panelYears" class="chip-box"></div>
-      </div>
-      <div>
-        <label class="lbl">② 因变量 Y（单选）</label>
-        <select id="panelYSel" class="inp"></select>
-      </div>
-      <div>
-        <label class="lbl">③ 自变量 X（按点击顺序命名为 x1, x2…）</label>
-        <div id="panelXList" class="chip-box"></div>
-      </div>
-    </div>
-    <div id="panelPreview" class="hint"></div>
-    <div class="row" style="margin-top:8px">
-      <button class="btn btn-primary" id="panelSplitBtn">🚀 拆分为年度数据集</button>
-      <span id="panelMsg" class="hint"></span>
-    </div>
+  <div class="card" id="previewCard" style="display:none">
+    <h3>原始数据预览（前 5 行）</h3>
+    <select id="previewFileSel" class="inp"></select>
+    <div id="previewTable" class="table-wrap"></div>
   </div>
 
   <div class="card" id="varCard" style="display:none">
-    <h3>变量角色设置 <button class="btn btn-sm" id="autoDetectBtn">自动识别 (y / x1~xn)</button></h3>
-    <p class="hint">为每一列指定角色：因变量 Y（仅一个）、连续自变量（参与离散化寻优）、分类自变量（已分级，直接参与）、忽略。</p>
+    <h3>变量角色设置
+      <button class="btn btn-sm" id="autoDetectBtn">自动识别</button>
+    </h3>
+    <p class="hint">列表为去重后的<b>变量基名</b>（已剥离年份、过滤 OBJECTID/Shape/ORIG_FID/FID/Id）。指定：因变量 Y（仅一个）、连续自变量（参与离散化寻优）、分类自变量（已分级直接参与）、忽略。</p>
+    <div id="yearInfo" class="year-info"></div>
     <div id="roleTable"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn btn-primary" id="splitBtn">✂ 拆分为年度数据集</button>
+      <span id="splitHint" class="hint"></span>
+    </div>
   </div>
 
-  <div class="card" id="previewCard" style="display:none">
-    <h3>数据预览（前 5 行）</h3>
-    <select id="previewFileSel" class="inp"></select>
-    <div id="previewTable" class="table-wrap"></div>
+  <div class="card" id="splitCard" style="display:none">
+    <h3>拆分后的训练数据集</h3>
+    <p class="hint">已按年份拆分并重命名为 <code>y, x1, x2 …</code>。这些数据集将用于统计检验与地理探测。</p>
+    <div id="splitResult"></div>
+    <div id="splitMapping" class="table-wrap" style="margin-top:10px"></div>
   </div>
 </section>
 
@@ -131,7 +118,7 @@
         <label class="lbl" style="margin-top:10px">最大样本量（超出随机抽样）</label>
         <input type="number" id="maxSample" class="inp" value="100000" step="1000">
         <label class="lbl" style="margin-top:10px">离散化寻优抽样上限</label>
-        <input type="number" id="discSample" class="inp" value="30000" step="5000" min="1000">
+        <input type="number" id="discSample" class="inp" value="50000" step="5000" min="1000">
         <p class="hint">natural(Jenks) 等方法对大样本极慢。样本超过此值时，先抽样寻找最优断点，再将断点应用到全量数据探测，结果几乎不受影响。</p>
       </div>
       <div>
@@ -197,18 +184,32 @@
 
 <!-- ================= ⑤ 结果表格 ================= -->
 <section id="page-tables" class="page">
+  <div class="card export-center">
+    <h3>📦 一键导出全部结果</h3>
+    <p class="hint">勾选需要导出的内容（默认全选），打包为一个 ZIP。统计与探测结果分别汇总为多工作表的 Excel。</p>
+    <div class="export-opts">
+      <label><input type="checkbox" id="expTrain" checked> 训练数据表（按年份整理的 y/x1…xn，CSV）</label>
+      <label><input type="checkbox" id="expImages" checked> 所有图片（每个数据集的 5~6 张图，PNG/当前格式）</label>
+      <label><input type="checkbox" id="expStatsXlsx" checked> 数理统计结果.xlsx（描述/方差/VIF/相关性，按类型分表）</label>
+      <label><input type="checkbox" id="expGdXlsx" checked> 地理探测器结果.xlsx（因子/交互/生态/风险/离散化，按类型分表）</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn btn-success" id="exportAllBundleBtn">⬇ 导出选中结果 (ZIP)</button>
+      <span id="exportBundleHint" class="hint"></span>
+    </div>
+  </div>
   <div class="card">
     <div class="row">
-      <label>结果文件：<select id="tableFileSel" class="inp"></select></label>
-      <button class="btn btn-success" id="exportAllTablesBtn">导出全部文件全部表格 (ZIP)</button>
+      <label>查看结果文件：<select id="tableFileSel" class="inp"></select></label>
     </div>
-    <p class="hint">所有 CSV 均带 UTF-8 BOM，可直接用 Excel 打开。</p>
+    <p class="hint">下方可逐表预览并单独导出 CSV（带 UTF-8 BOM，Excel 直接打开）。</p>
   </div>
   <div id="tablesArea"></div>
 </section>
 
 </main>
 
+<script src="lib/xlsx.full.min.js"></script>
 <script src="js/charts.js?v=4"></script>
 <script src="js/app.js?v=4"></script>
 </body>

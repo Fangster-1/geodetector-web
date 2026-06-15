@@ -17,19 +17,19 @@ R plumber 后端 + 纯静态前端（无构建步骤）。地理探测器（GD �
 
 - 冷启动需 15~30 秒（R 包加载），端口 `8765`
 - R 依赖：`plumber, GD, readxl, jsonlite, car, callr`
-- 前端库已本地化到 `www/lib/`（echarts、jszip），完全离线可用
+- 前端库已本地化到 `www/lib/`（echarts、jszip、xlsx/SheetJS），完全离线可用
 
 ## 架构要点
 
 ```
 run_app.R              → 启动入口，注入 APP_ROOT 全局变量，挂载 plumber + 静态文件
-api/plumber.R          → API 路由（/api/upload, /api/panel_split, /api/stats, /api/run_start 等）
-api/core.R             → 核心计算：文件读取、面板宽表解析(detect_panel/split_panel)、数据清洗、统计检验、地理探测四类分析
+api/plumber.R          → API 路由（/api/upload, /api/split, /api/get_csv, /api/stats,
+                          /api/run_start, /api/run_poll, /api/run_stop 等）
+api/core.R             → 核心计算：文件读取、数据清洗、统计检验、地理探测四类分析 + 离散化寻优
 www/index.html         → 单页应用，5 个步骤页面
-www/js/app.js          → 前端逻辑、API 调用、批量导出（814 行）
-www/js/charts.js       → 制图引擎：6 类图表的 ECharts 构建与样式系统（864 行）
-www/css/style.css      → 样式（158 行）
-_testdata/             → 示例 CSV 数据，可删除
+www/js/app.js          → 前端逻辑、上传与年度拆分、API 调用、导出中心
+www/js/charts.js       → 制图引擎：6 类图表 ECharts 构建 + 通用坐标轴/标题/边距样式系统
+www/css/style.css      → 样式
 ```
 
 ## 关键实现细节
@@ -38,8 +38,9 @@ _testdata/             → 示例 CSV 数据，可删除
 - **后台计算**：地理探测通过 `callr::r_bg` 在子进程中执行，前端轮询 `/api/run_poll` 获取进度。子进程 stdout/stderr 重定向到临时文件防止管道阻塞
 - **数据存储**：`STORE` 是 R 环境对象（内存），上传的文件和任务状态全部存在内存中，重启服务即丢失
 - **CSV 编码**：先尝试 UTF-8-BOM，检测到乱码自动回退 GBK
-- **面板宽表解析**：/api/upload 对每个文件调用 `detect_panel`（正则 `^(.*?)_?([0-9]{4})$`，perl=TRUE）识别「变量_年份」列；前端据此显示面板拆分卡片，/api/panel_split 按所选年份拆分并把各年数据集（列重命名 y, x1~xn）存回 STORE，与普通上传文件同等参与后续流程
-- **前端无构建**：直接编辑 `www/` 下的文件，刷新浏览器即生效
+- **年度拆分**：年份/基名检测在**前端**完成（`app.js` 的 `detectYear`/`baseName`，匹配 `(19|20)\d{2}` 于列名任意位置；ArcGIS/ID 字段由 `IGNORE_FIELD` 过滤）。变量角色设置作用于去重后的基名；点「拆分为年度数据集」时前端为每个年份算出源列清单，POST `/api/split`，R 仅做列选择+重命名（y, x1~xn）存回 STORE。常量列（无年份）复制进每一年。单一数据源真理在前端，R 不重复年份逻辑
+- **导出**：`/api/get_csv` 取回某数据集完整 CSV（训练数据导出）；统计/探测结果用 SheetJS 在浏览器端汇总为多 sheet xlsx，连同图片 PNG、训练 CSV 打包成一个 ZIP
+- **前端无构建**：直接编辑 `www/` 下的文件，刷新浏览器即生效（`index.html` 里 JS/CSS 带 `?v=N`，改版时递增以破缓存）
 
 ## 编辑注意事项
 

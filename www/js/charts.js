@@ -330,7 +330,7 @@ const CHARTS = {
       };
       return {
         backgroundColor: st.bgColor,
-        title: buildTitle(g, st, `单因子探测结果：${payload.fileLabel}`),
+        title: buildTitle(g, st, `单因子探测结果`),
         grid: buildGrid(st, autoGrid),
         xAxis: horiz ? valAxis : catAxis,
         yAxis: horiz ? catAxis : valAxis,
@@ -451,7 +451,7 @@ const CHARTS = {
 
       return {
         backgroundColor: st.bgColor,
-        title: buildTitle(g, st, `交互作用探测：${payload.fileLabel}`),
+        title: buildTitle(g, st, `交互作用探测`),
         grid: { left: LL, right: RR, top: TT, bottom: BB },
         xAxis, yAxis,
         visualMap: vm,
@@ -542,7 +542,7 @@ const CHARTS = {
       const padAll = (yMaxAll - yMinAll) * 0.12 || 0.05;
 
       const grids = [], xAxes = [], yAxes = [], series = [], titles = [];
-      if (st.titleShow) titles.push(buildTitle(g, st, `因子离散化参数寻优过程：${payload.fileLabel}`));
+      if (st.titleShow) titles.push(buildTitle(g, st, `因子离散化参数寻优过程`));
 
       discs.forEach((d, i) => {
         const r = lay.rects[i];
@@ -690,7 +690,7 @@ const CHARTS = {
       const yAxis = buildAxis(g, st, "y", { type: "category", data: yCats, inverse: true });
       return {
         backgroundColor: st.bgColor,
-        title: buildTitle(g, st, `生态探测（F 检验显著性）：${payload.fileLabel}`),
+        title: buildTitle(g, st, `生态探测（F 检验显著性）`),
         grid: buildGrid(st, autoGrid),
         xAxis, yAxis,
         visualMap: vm,
@@ -715,9 +715,9 @@ const CHARTS = {
         axisDefaults("y", "val", { ySplitShow: true }),
         {
           cols, hGap: 6, vGap: 13, axisAuto: true,
-          colorMode: "perVar", barColor: "#0c5496",
+          colorMode: "single", barColor: "#0c5496",
           barWidth: 70, barBorderWidth: 0.5, barBorderColor: "#333333",
-          showValues: true, yName: "Y 均值", subTitleSize: 0,
+          showValues: false, yName: "Y 均值", subTitleSize: 0,
           width: clamp(cols * 380 + 60, 560, 2600), height: clamp(rows * 290 + 100, 420, 2800)
         });
     },
@@ -758,7 +758,7 @@ const CHARTS = {
       const subSize = st.subTitleSize > 0 ? st.subTitleSize : clamp(effAxis + 1, 10, 16);
       const aColor = st.xLabelColor;
       const grids = [], xAxes = [], yAxes = [], series = [], titles = [];
-      if (st.titleShow) titles.push(buildTitle(g, st, `风险探测（分区 Y 均值）：${payload.fileLabel}`));
+      if (st.titleShow) titles.push(buildTitle(g, st, `风险探测（分区 Y 均值）`));
       risk.forEach((d, i) => {
         const r = lay.rects[i];
         grids.push({ left: r.left + "%", top: r.top + "%", width: r.width + "%", height: r.height + "%" });
@@ -840,7 +840,7 @@ const CHARTS = {
       const yAxis = buildAxis(g, st, "y", { type: "category", data: vars.map(nm), inverse: true });
       return {
         backgroundColor: st.bgColor,
-        title: buildTitle(g, st, `${st.method === "pearson" ? "Pearson" : "Spearman"} 相关性：${payload.fileLabel}`),
+        title: buildTitle(g, st, `${st.method === "pearson" ? "Pearson" : "Spearman"} 相关性`),
         grid: gr,
         xAxis, yAxis,
         visualMap: {

@@ -1,2 +1,19 @@
+# 测试与临时数据
 _testdata/
-.git/
+_diag.R
+*.tmp
+*.log
+
+# R 会话文件
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# 系统文件
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 运行时产生的进度/输出临时文件
+*_prog*.txt

@@ -1,5 +1,5 @@
 # ==============================================================
-# 地理探测器网站 - plumber API 路由（含面板宽表拆分）
+# 地理探测器网站 - plumber API 路由
 # ==============================================================
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -33,17 +33,9 @@ function(req) {
       # 预览前 5 行（保证序列化为数组的数组）
       prev <- head(df, 5)
       prev[] <- lapply(prev, as.character)
-      # 面板宽表自动识别（变量_年份 表头，如 GDP_2015 / pop2020）
-      panel <- detect_panel(df)
-      panel_info <- if (isTRUE(panel$is_panel)) {
-        list(years = as.list(panel$years),
-             dynamic_vars = as.list(panel$dynamic_vars),
-             static_vars = as.list(panel$static_vars))
-      } else NULL
       list(
         ok = TRUE, id = id, name = f$name,
         n_rows = nrow(df), columns = as.list(colnames(df)),
-        panel = panel_info,
         preview = lapply(seq_len(nrow(prev)),
                          function(i) as.list(unname(unlist(prev[i, , drop = TRUE]))))
       )
@@ -91,47 +83,6 @@ function(req) {
   }, error = function(e) list(ok = FALSE, error = conditionMessage(e)))
 }
 
-#* 面板宽表按年份拆分：选择 Y / X 变量与年份，拆分为各年份数据集并缓存
-#* body: {id, years:[...], y:{kind,name}|null, x:[{kind,name},...]}
-#* @post /api/panel_split
-#* @serializer unboxedJSON
-function(req) {
-  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
-  f <- STORE$files[[body$id]]
-  if (is.null(f)) return(list(ok = FALSE, error = "文件不存在，请重新上传。"))
-  tryCatch({
-    panel <- detect_panel(f$data)
-    years <- unlist(body$years)
-    if (length(years) == 0) stop("请至少选择一个年份。")
-    x_sels <- body$x %||% list()
-    if (is.null(body$y) && length(x_sels) == 0) stop("请至少选择一个变量。")
-    sp <- split_panel(f$data, panel, years, body$y, x_sels)
-    if (length(sp$datasets) == 0) {
-      stop(paste0("没有任何年份可拆分。",
-                  paste(sprintf("%s 年: %s", names(sp$skipped), unlist(sp$skipped)),
-                        collapse = "；")))
-    }
-    base <- sub("\\.(csv|xlsx|xls)$", "", f$name, ignore.case = TRUE)
-    out_files <- lapply(names(sp$datasets), function(yr) {
-      d <- sp$datasets[[yr]]
-      id <- paste0("f", format(Sys.time(), "%H%M%S"), "_",
-                   paste(sample(c(letters, 0:9), 6, TRUE), collapse = ""))
-      nm <- sprintf("%s_%s.csv", base, yr)
-      STORE$files[[id]] <- list(name = nm, data = d)
-      prev <- head(d, 5)
-      prev[] <- lapply(prev, as.character)
-      list(ok = TRUE, id = id, name = nm,
-           n_rows = nrow(d), columns = as.list(colnames(d)),
-           preview = lapply(seq_len(nrow(prev)),
-                            function(i) as.list(unname(unlist(prev[i, , drop = TRUE])))))
-    })
-    skipped <- if (length(sp$skipped))
-      lapply(names(sp$skipped), function(yr) list(year = yr, reason = sp$skipped[[yr]]))
-    else list()
-    list(ok = TRUE, files = out_files, skipped = skipped)
-  }, error = function(e) list(ok = FALSE, error = conditionMessage(e)))
-}
-
 #* 删除已上传文件缓存
 #* @post /api/remove
 #* @serializer unboxedJSON
@@ -139,6 +90,49 @@ function(req) {
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   STORE$files[[body$id]] <- NULL
   list(ok = TRUE)
+}
+
+#* 按指定列拆分原始表为多个年度数据集（列选择/重命名逻辑由前端给出）
+#* body: { id, datasets: [{ name, src_cols:[...], new_cols:[...] }] }
+#* @post /api/split
+#* @serializer unboxedJSON
+function(req) {
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  f <- STORE$files[[body$id]]
+  if (is.null(f)) return(list(ok = FALSE, error = "原始文件不存在，请重新上传。"))
+  raw <- f$data
+  out <- lapply(body$datasets, function(ds) {
+    tryCatch({
+      src <- unlist(ds$src_cols); new <- unlist(ds$new_cols)
+      missing <- setdiff(src, colnames(raw))
+      if (length(missing) > 0) stop(sprintf("缺少列: %s", paste(missing, collapse = ", ")))
+      df <- raw[, src, drop = FALSE]
+      colnames(df) <- new
+      id <- paste0("d", format(Sys.time(), "%H%M%S"), "_",
+                   paste(sample(c(letters, 0:9), 6, TRUE), collapse = ""))
+      STORE$files[[id]] <- list(name = ds$name, data = df)
+      prev <- head(df, 5); prev[] <- lapply(prev, as.character)
+      list(ok = TRUE, id = id, name = ds$name,
+           n_rows = nrow(df), columns = as.list(colnames(df)),
+           preview = lapply(seq_len(nrow(prev)),
+                            function(i) as.list(unname(unlist(prev[i, , drop = TRUE])))))
+    }, error = function(e) list(ok = FALSE, name = ds$name, error = conditionMessage(e)))
+  })
+  list(ok = TRUE, datasets = out)
+}
+
+#* 取回某个已存数据集的完整 CSV 文本（用于导出训练数据）
+#* @get /api/get_csv
+#* @serializer unboxedJSON
+function(id = "") {
+  f <- STORE$files[[id]]
+  if (is.null(f)) return(list(ok = FALSE, error = "数据集不存在。"))
+  tmp <- tempfile(fileext = ".csv")
+  on.exit(unlink(tmp), add = TRUE)
+  # write_excel_csv 带 UTF-8 BOM，Excel 可直接打开
+  utils::write.csv(f$data, tmp, row.names = FALSE, fileEncoding = "UTF-8")
+  txt <- paste(readLines(tmp, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  list(ok = TRUE, name = f$name, csv = txt)
 }
 
 # ==============================================================
@@ -176,7 +170,7 @@ function(req) {
                   cont = cont, catv = catv,
                   methods = unlist(body$methods),
                   intervals = as.integer(unlist(body$intervals)),
-                  disc_sample = body$disc_sample %||% 30000,
+                  disc_sample = body$disc_sample %||% 50000,
                   progress_file = prog_file),
       stdout = paste0(prog_file, ".out"),
       stderr = paste0(prog_file, ".err"),

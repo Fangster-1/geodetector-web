@@ -7,8 +7,10 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 
 /* ---------------- 全局状态 ---------------- */
 const S = {
-  files: [],            // {id, name, n_rows, columns, preview}
-  roles: {},            // 列名 -> 'y' | 'cont' | 'cat' | 'ignore'
+  rawFiles: [],         // 原始上传表 {id, name, n_rows, columns, preview}
+  files: [],            // 拆分后的训练数据集 {id, name, n_rows, columns, preview}
+  roles: {},            // 变量基名 -> 'y' | 'cont' | 'cat' | 'ignore'
+  splitMeta: null,      // { y:'y', cont:['x1',...], cat:['x2',...], xMap:[{new,base}], years:[] }
   results: {},          // fileId -> {clean_report, result}
   stats: {},            // fileId -> {clean_report, stats}
   current: { fileId: null, chart: "factor" },
@@ -41,7 +43,6 @@ async function api(path, body) {
   if (!r.ok) throw new Error(`服务器错误 HTTP ${r.status}`);
   return r.json();
 }
-const baseName = n => n.replace(/\.(csv|xlsx|xls)$/i, "");
 function fileToB64(file) {
   return new Promise((res, rej) => {
     const fr = new FileReader();
@@ -107,182 +108,126 @@ dz.ondragleave = () => dz.classList.remove("over");
 dz.ondrop = e => { e.preventDefault(); dz.classList.remove("over"); handleFiles(e.dataTransfer.files); };
 fi.onchange = () => handleFiles(fi.files);
 
+/* ---- 年份/基名工具 ---- */
+// 需要从自变量列表中过滤掉的字段（ArcGIS 导出字段、ID 字段）
+const IGNORE_FIELD = /^(objectid|shape|orig_fid|fid|id)(_|\b|\d|$)/i;
+function isIgnoredField(name) { return IGNORE_FIELD.test(String(name).trim()); }
+// 检测列名中的年份 token（1900-2099），返回 4 位字符串或 null
+function detectYear(name) {
+  const m = String(name).match(/(?:^|[^0-9])((?:19|20)\d{2})(?:[^0-9]|$)/);
+  return m ? m[1] : null;
+}
+// 剥离年份得到变量基名（前缀/后缀/中间均可）
+function baseName(name) {
+  const y = detectYear(name);
+  if (!y) return String(name).trim();
+  let b = String(name).replace(y, "");
+  b = b.replace(/^[_\-\s]+|[_\-\s]+$/g, "").replace(/[_\-\s]{2,}/g, "_");
+  return b || String(name).trim();
+}
+// 文件/数据集名去扩展名（不剥年份，用于文件命名与图表标识）
+function fileBase(name) { return String(name).replace(/\.(csv|xlsx|xls)$/i, ""); }
+
+/* ---- 解析进度动画 ---- */
+function showParseRow(html, cls) {
+  $("#parseStatus").innerHTML = `<div class="parse-row ${cls || ""}">${html}</div>`;
+}
+function clearParseRow() { $("#parseStatus").innerHTML = ""; }
+
 async function handleFiles(fileList) {
   const files = Array.from(fileList).filter(f => /\.(csv|xlsx|xls)$/i.test(f.name));
   if (!files.length) { alert("请选择 CSV 或 Excel 文件"); return; }
-  dz.querySelector("p").textContent = "上传解析中，请稍候…";
+  dz.querySelector("p").textContent = "解析中…";
   try {
     const payload = [];
-    for (const f of files) payload.push({ name: f.name, b64: await fileToB64(f) });
-    const resp = await api("/api/upload", { files: payload });
-    for (const f of resp.files) {
-      if (f.ok) S.files.push(f);
-      else alert(`文件 ${f.name} 解析失败：${f.error}`);
+    for (let i = 0; i < files.length; i++) {
+      showParseRow(`<div class="spinner"></div><div class="parse-text">正在读取文件 <b>${files[i].name}</b> （${i + 1}/${files.length}）…</div>`);
+      payload.push({ name: files[i].name, b64: await fileToB64(files[i]) });
+      await sleep(20); // 让动画有机会渲染
     }
-    refreshFileUI();
-    if (S.files.length && !Object.keys(S.roles).length) autoDetectRoles();
+    showParseRow(`<div class="spinner"></div><div class="parse-bar-wrap"><div class="parse-bar" id="parseBar" style="width:30%"></div></div><div class="parse-text">服务器解析中（含编码识别、Excel 读取）…</div>`);
+    const resp = await api("/api/upload", { files: payload });
+    const bar = $("#parseBar"); if (bar) bar.style.width = "100%";
+    let okCount = 0, errs = [];
+    for (const f of resp.files) {
+      if (f.ok) { S.rawFiles.push(f); okCount++; }
+      else errs.push(`${f.name}: ${f.error}`);
+    }
+    if (okCount > 0) {
+      showParseRow(`✅ <div class="parse-text">解析完成：成功 <b>${okCount}</b> 个文件${errs.length ? `，失败 ${errs.length} 个` : ""}。请在下方设置变量角色并拆分。</div>`, "done");
+      setTimeout(clearParseRow, 4000);
+    } else {
+      showParseRow(`❌ <div class="parse-text">全部解析失败：${errs.join("；")}</div>`, "err");
+    }
+    if (errs.length && okCount > 0) console.warn("部分文件解析失败:", errs);
+    refreshRawUI();
+    if (S.rawFiles.length && !Object.keys(S.roles).length) autoDetectRoles();
     markStepDone("upload");
   } catch (e) {
-    alert("上传失败：" + e.message);
+    showParseRow(`❌ <div class="parse-text">上传失败：${e.message}</div>`, "err");
   }
   dz.querySelector("p").textContent = "点击选择 或 拖拽文件到此处";
   fi.value = "";
 }
 
-function refreshFileUI() {
-  $("#fileList").innerHTML = S.files.map(f => `
+/* 原始文件列表 + 预览 */
+function refreshRawUI() {
+  $("#fileList").innerHTML = S.rawFiles.map(f => `
     <div class="file-item">
       <span class="fname">📄 ${f.name}</span>
       <span class="fmeta">${f.n_rows} 行 × ${f.columns.length} 列</span>
-      <span class="${S.results[f.id] ? "file-status-ok" : "fmeta"}">${S.results[f.id] ? "✓ 已完成探测" : "未运行"}</span>
-      <button class="btn-danger-text" onclick="removeFile('${f.id}')">删除</button>
+      <button class="btn-danger-text" onclick="removeRaw('${f.id}')">删除</button>
     </div>`).join("");
-  const opts = S.files.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
-  ["previewFileSel", "statsFileSel", "runFileSel"].forEach(id => { $("#" + id).innerHTML = opts; });
-  const doneOpts = S.files.filter(f => S.results[f.id]).map(f => `<option value="${f.id}">${f.name}</option>`).join("");
-  $("#chartFileSel").innerHTML = doneOpts || opts;
-  $("#tableFileSel").innerHTML = doneOpts || opts;
-  $("#varCard").style.display = S.files.length ? "" : "none";
-  $("#previewCard").style.display = S.files.length ? "" : "none";
-  refreshPanelUI();
+  $("#previewFileSel").innerHTML = S.rawFiles.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  $("#varCard").style.display = S.rawFiles.length ? "" : "none";
+  $("#previewCard").style.display = S.rawFiles.length ? "" : "none";
   renderRoleTable();
   renderPreview();
 }
-window.removeFile = async function (id) {
+window.removeRaw = async function (id) {
   await api("/api/remove", { id });
-  S.files = S.files.filter(f => f.id !== id);
-  delete S.results[id]; delete S.stats[id];
-  refreshFileUI();
+  S.rawFiles = S.rawFiles.filter(f => f.id !== id);
+  refreshRawUI();
 };
 
-/* ---------------- 面板宽表自动解析（变量_年份 → 按年拆分） ---------------- */
-const PANEL = { fileId: null, years: new Set(), y: "", x: [] };  // x: ["d|name"/"s|name"] 按点击顺序
-
-function panelFiles() { return S.files.filter(f => f.panel); }
-
-function refreshPanelUI() {
-  const pf = panelFiles();
-  $("#panelCard").style.display = pf.length ? "" : "none";
-  if (!pf.length) { PANEL.fileId = null; return; }
-  $("#panelFileSel").innerHTML = pf.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
-  if (!pf.some(f => f.id === PANEL.fileId)) initPanelConfig(pf[0].id);
-  else $("#panelFileSel").value = PANEL.fileId;
+/* 所有原始表的基名并集（过滤掉 ArcGIS/ID 字段） */
+function unionBases() {
+  const set = new Map();   // base -> 顺序
+  S.rawFiles.forEach(f => f.columns.forEach(c => {
+    if (isIgnoredField(c)) return;
+    const b = baseName(c);
+    if (isIgnoredField(b)) return;
+    if (!set.has(b)) set.set(b, set.size);
+  }));
+  return Array.from(set.keys());
 }
-$("#panelFileSel").onchange = e => initPanelConfig(e.target.value);
-
-function initPanelConfig(fileId) {
-  const f = S.files.find(x => x.id === fileId);
-  if (!f || !f.panel) return;
-  PANEL.fileId = fileId;
-  PANEL.years = new Set(f.panel.years);     // 默认全选年份
-  PANEL.y = "";
-  PANEL.x = [];
-  $("#panelFileSel").value = fileId;
-  $("#panelInfo").textContent =
-    `识别到 ${f.panel.years.length} 个年份（${f.panel.years.join("、")}），动态变量 ${f.panel.dynamic_vars.length} 个，静态变量 ${f.panel.static_vars.length} 个`;
-  renderPanelConfig();
-}
-
-function panelOptions(f) {
-  return [
-    ...f.panel.dynamic_vars.map(v => ({ val: "d|" + v, label: `🔄 ${v}`, title: `动态变量（按年取 ${v}_年份 列）` })),
-    ...f.panel.static_vars.map(v => ({ val: "s|" + v, label: `📌 ${v}`, title: "静态变量（各年份取同一列）" }))
-  ];
-}
-
-function renderPanelConfig() {
-  const f = S.files.find(x => x.id === PANEL.fileId);
-  if (!f) return;
-  // 年份 chips
-  $("#panelYears").innerHTML = f.panel.years.map(y =>
-    `<span class="chip ${PANEL.years.has(y) ? "sel" : ""}" data-y="${y}">${y}</span>`).join("");
-  $$("#panelYears .chip").forEach(el => el.onclick = () => {
-    const y = el.dataset.y;
-    PANEL.years.has(y) ? PANEL.years.delete(y) : PANEL.years.add(y);
-    renderPanelConfig();
-  });
-  // Y 下拉
-  const opts = panelOptions(f);
-  $("#panelYSel").innerHTML = `<option value="">(不选择)</option>` +
-    opts.map(o => `<option value="${o.val}" ${PANEL.y === o.val ? "selected" : ""}>${o.label}</option>`).join("");
-  $("#panelYSel").onchange = e => {
-    PANEL.y = e.target.value;
-    PANEL.x = PANEL.x.filter(v => v !== PANEL.y);   // Y 不可同时作为 X
-    renderPanelConfig();
-  };
-  // X chips（带顺序角标）
-  $("#panelXList").innerHTML = opts.filter(o => o.val !== PANEL.y).map(o => {
-    const idx = PANEL.x.indexOf(o.val);
-    return `<span class="chip ${idx >= 0 ? "sel" : ""}" data-v="${o.val}" title="${o.title}">
-      ${idx >= 0 ? `<b class="chip-idx">x${idx + 1}</b>` : ""}${o.label}</span>`;
-  }).join("");
-  $$("#panelXList .chip").forEach(el => el.onclick = () => {
-    const v = el.dataset.v;
-    const i = PANEL.x.indexOf(v);
-    i >= 0 ? PANEL.x.splice(i, 1) : PANEL.x.push(v);
-    renderPanelConfig();
-  });
-  // 映射预览
-  const parts = [];
-  if (PANEL.y) parts.push(`${PANEL.y.slice(2)} → y`);
-  PANEL.x.forEach((v, i) => parts.push(`${v.slice(2)} → x${i + 1}`));
-  $("#panelPreview").innerHTML = parts.length
-    ? `<b>映射预览：</b>${parts.join("　|　")}　（提取年份：${[...PANEL.years].sort().join("、") || "无"}）`
-    : "";
-}
-
-const toSel = v => ({ kind: v[0] === "d" ? "dynamic" : "static", name: v.slice(2) });
-
-$("#panelSplitBtn").onclick = async () => {
-  const f = S.files.find(x => x.id === PANEL.fileId);
-  if (!f) return;
-  if (!PANEL.years.size) { alert("请至少选择一个年份"); return; }
-  if (!PANEL.y && !PANEL.x.length) { alert("请至少选择一个变量（Y 或 X）"); return; }
-  const btn = $("#panelSplitBtn");
-  btn.disabled = true; $("#panelMsg").textContent = "拆分中…";
-  try {
-    const r = await api("/api/panel_split", {
-      id: f.id,
-      years: [...PANEL.years].sort(),
-      y: PANEL.y ? toSel(PANEL.y) : null,
-      x: PANEL.x.map(toSel)
-    });
-    if (!r.ok) throw new Error(r.error);
-    for (const nf of r.files) S.files.push(nf);
-    autoDetectRoles();           // 拆分后的列名为 y, x1~xn，自动识别角色
-    refreshFileUI();
-    let msg = `✓ 已生成 ${r.files.length} 个年度数据集（列已重命名为 y, x1~xn，变量角色已自动设置）`;
-    if (r.skipped && r.skipped.length)
-      msg += `；跳过：${r.skipped.map(s => `${s.year}年(${s.reason})`).join("，")}`;
-    $("#panelMsg").textContent = msg;
-  } catch (e) {
-    $("#panelMsg").textContent = "";
-    alert("拆分失败：" + e.message);
-  }
-  btn.disabled = false;
-};
-
-/* 变量角色 */
-function unionColumns() {
+function detectedYears() {
   const set = new Set();
-  S.files.forEach(f => f.columns.forEach(c => set.add(c)));
-  return Array.from(set);
+  S.rawFiles.forEach(f => f.columns.forEach(c => { const y = detectYear(c); if (y) set.add(y); }));
+  return Array.from(set).sort();
 }
 function autoDetectRoles() {
   S.roles = {};
-  unionColumns().forEach(c => {
-    const lc = c.toLowerCase().trim();
-    if (lc === "y") S.roles[c] = "y";
-    else if (/^x\d+$/.test(lc)) S.roles[c] = "cont";
-    else S.roles[c] = "ignore";
+  unionBases().forEach(b => {
+    const lb = b.toLowerCase();
+    if (lb === "y" || /(^|_)y$/.test(lb)) S.roles[b] = "y";
+    else S.roles[b] = "cont";
   });
+  // 若没有任何 y，把第一个设为 y
+  if (!Object.values(S.roles).includes("y")) {
+    const first = unionBases()[0]; if (first) S.roles[first] = "y";
+  }
   renderRoleTable();
 }
 $("#autoDetectBtn").onclick = autoDetectRoles;
 
 function renderRoleTable() {
-  const cols = unionColumns();
-  $("#roleTable").innerHTML = `<div class="role-grid">` + cols.map(c => {
+  const bases = unionBases();
+  const years = detectedYears();
+  $("#yearInfo").innerHTML = years.length
+    ? `检测到 <b>${years.length}</b> 个年份：${years.join("、")}　→ 将按年份拆分为 ${years.length} 个数据集（常量列自动复制到每年）`
+    : `未检测到年份后缀，将作为<b>单个</b>数据集处理（直接重命名为 y / x1…xn）`;
+  $("#roleTable").innerHTML = `<div class="role-grid">` + bases.map(c => {
     const role = S.roles[c] || "ignore";
     const cls = role === "y" ? "role-y" : role === "cont" ? "role-cont" : role === "cat" ? "role-cat" : "";
     return `<div class="role-item ${cls}">
@@ -300,20 +245,130 @@ window.setRole = function (col, role) {
   S.roles[col] = role;
   renderRoleTable();
 };
+/* 拆分后供后续流程使用的变量配置（固定为 y / x1…xn） */
 function getVarConfig() {
-  const y = Object.keys(S.roles).find(c => S.roles[c] === "y");
-  const cont = Object.keys(S.roles).filter(c => S.roles[c] === "cont");
-  const cat = Object.keys(S.roles).filter(c => S.roles[c] === "cat");
-  return { y, cont, cat, allX: cont.concat(cat) };
+  if (S.splitMeta) return { y: S.splitMeta.y, cont: S.splitMeta.cont, cat: S.splitMeta.cat, allX: S.splitMeta.cont.concat(S.splitMeta.cat) };
+  return { y: null, cont: [], cat: [], allX: [] };
 }
 
-/* 预览 */
+/* 预览（原始表） */
 $("#previewFileSel").onchange = renderPreview;
 function renderPreview() {
-  const f = S.files.find(x => x.id === $("#previewFileSel").value) || S.files[0];
+  const f = S.rawFiles.find(x => x.id === $("#previewFileSel").value) || S.rawFiles[0];
   if (!f) { $("#previewTable").innerHTML = ""; return; }
   const rows = Array.isArray(f.preview) ? f.preview : Object.values(f.preview || {});
   $("#previewTable").innerHTML = makeTable(f.columns, rows);
+}
+
+/* ---- 拆分为年度数据集 ---- */
+$("#splitBtn").onclick = doSplit;
+async function doSplit() {
+  const baseRole = {};
+  Object.entries(S.roles).forEach(([b, r]) => baseRole[b] = r);
+  const yBase = Object.keys(baseRole).find(b => baseRole[b] === "y");
+  const contBases = Object.keys(baseRole).filter(b => baseRole[b] === "cont");
+  const catBases = Object.keys(baseRole).filter(b => baseRole[b] === "cat");
+  const xBases = contBases.concat(catBases);
+  if (!yBase) { alert("请先指定一个因变量 Y"); return; }
+  if (!xBases.length) { alert("请至少指定一个自变量 X"); return; }
+
+  // 新列名映射：y, x1, x2 ... 顺序 = 连续在前、分类在后
+  const newCols = ["y"], xMap = [], contNew = [], catNew = [];
+  xBases.forEach((b, i) => {
+    const nm2 = "x" + (i + 1);
+    newCols.push(nm2);
+    xMap.push({ new: nm2, base: b });
+    if (catBases.includes(b)) catNew.push(nm2); else contNew.push(nm2);
+  });
+
+  $("#splitBtn").disabled = true; $("#splitHint").textContent = "拆分中…";
+  // 清空旧的拆分结果
+  for (const f of S.files) { try { await api("/api/remove", { id: f.id }); } catch (e) {} }
+  S.files = []; S.results = {}; S.stats = {};
+
+  let allDatasets = [], usedYears = [];
+  try {
+    for (const raw of S.rawFiles) {
+      // 为该原始表建立 base -> {byYear, constCol}
+      const info = {};
+      raw.columns.forEach(c => {
+        if (isIgnoredField(c)) return;
+        const b = baseName(c), y = detectYear(c);
+        if (!info[b]) info[b] = { byYear: {}, constCol: null };
+        if (y) info[b].byYear[y] = c; else info[b].constCol = c;
+      });
+      // 该表涉及的年份
+      const yrSet = new Set();
+      [yBase, ...xBases].forEach(b => { if (info[b]) Object.keys(info[b].byYear).forEach(y => yrSet.add(y)); });
+      const years = Array.from(yrSet).sort();
+      const rawBase = fileBase(raw.name).replace(/[_\-\s]+$/g, "");
+
+      const colFor = (b, year) => {
+        const it = info[b];
+        if (!it) return null;
+        if (year && it.byYear[year]) return it.byYear[year];
+        return it.constCol || (year ? null : Object.values(it.byYear)[0] || null);
+      };
+
+      const datasets = [];
+      if (years.length === 0) {
+        // 无年份：单数据集
+        const src = [colFor(yBase, null), ...xBases.map(b => colFor(b, null))];
+        if (src.includes(null)) { alert(`原始表 ${raw.name} 缺少所选变量的列`); continue; }
+        const dsName = S.rawFiles.length > 1 ? rawBase : (rawBase || "数据集");
+        datasets.push({ name: dsName, src_cols: src, new_cols: newCols });
+      } else {
+        years.forEach(year => {
+          const src = [colFor(yBase, year), ...xBases.map(b => colFor(b, year))];
+          if (src.includes(null)) { console.warn(`${raw.name} 年份 ${year} 缺列，跳过`); return; }
+          const dsName = S.rawFiles.length > 1 ? `${rawBase}_${year}` : year;
+          datasets.push({ name: dsName, src_cols: src, new_cols: newCols });
+          if (!usedYears.includes(year)) usedYears.push(year);
+        });
+      }
+      if (!datasets.length) continue;
+      const resp = await api("/api/split", { id: raw.id, datasets });
+      resp.datasets.forEach(d => {
+        if (d.ok) { S.files.push(d); allDatasets.push(d); }
+        else console.warn("拆分失败:", d.name, d.error);
+      });
+    }
+  } catch (e) {
+    alert("拆分失败：" + e.message);
+    $("#splitBtn").disabled = false; $("#splitHint").textContent = "";
+    return;
+  }
+
+  if (!S.files.length) { alert("没有生成任何数据集，请检查变量选择与年份。"); $("#splitBtn").disabled = false; $("#splitHint").textContent = ""; return; }
+
+  S.splitMeta = { y: "y", cont: contNew, cat: catNew, xMap, years: usedYears.sort() };
+  $("#splitBtn").disabled = false;
+  $("#splitHint").textContent = `✓ 已生成 ${S.files.length} 个数据集`;
+  renderSplitResult();
+  refreshDatasetSelectors();
+  initVarNameCtrls();
+}
+
+function renderSplitResult() {
+  $("#splitCard").style.display = "";
+  $("#splitResult").innerHTML = `<div class="split-grid">` +
+    S.files.map(f => `<div class="split-item">📊 <b>${f.name}</b>　${f.n_rows} 行 × ${f.columns.length} 列</div>`).join("") +
+    `</div>`;
+  // 变量映射表
+  const m = S.splitMeta;
+  $("#splitMapping").innerHTML = makeTable(
+    ["新列名", "对应变量基名", "类型"],
+    [["y", S.roles && Object.keys(S.roles).find(b => S.roles[b] === "y"), "因变量"]]
+      .concat(m.xMap.map(x => [x.new, x.base, m.cat.includes(x.new) ? "分类自变量" : "连续自变量"])));
+}
+
+/* 把拆分后的数据集填入各页面的下拉选择器 */
+function refreshDatasetSelectors() {
+  const opts = S.files.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  ["statsFileSel", "runFileSel"].forEach(id => { const el = $("#" + id); if (el) el.innerHTML = opts; });
+  const doneOpts = S.files.filter(f => S.results[f.id]).map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  $("#chartFileSel").innerHTML = doneOpts || opts;
+  $("#tableFileSel").innerHTML = doneOpts || opts;
 }
 
 /* ================= ② 统计检验 ================= */
@@ -377,7 +432,7 @@ function showStats(id) {
   const ctx = { n: co.vars.length - 1, nCont: 0 };
   const defs = CHARTS.corr.defaults(ctx);
   defs.method = method; defs.width = 760; defs.height = 560;
-  const opt = CHARTS.corr.build({ stats: st, fileLabel: baseName(f.name) }, defs, S.style.global || globalDefaults(), nameMap);
+  const opt = CHARTS.corr.build({ stats: st, fileLabel: fileBase(f.name) }, defs, S.style.global || globalDefaults(), nameMap);
   if (!S.charts.corrQuick) S.charts.corrQuick = echarts.init($("#corrQuickChart"));
   S.charts.corrQuick.clear();
   S.charts.corrQuick.setOption(opt);
@@ -393,7 +448,7 @@ function getRunParams() {
     methods, intervals,
     remove_zero_y: $("#removeZeroY").checked,
     max_sample: +$("#maxSample").value || 100000,
-    disc_sample: +$("#discSample").value || 30000
+    disc_sample: +$("#discSample").value || 50000
   };
 }
 function log(msg) {
@@ -488,7 +543,7 @@ async function runGD(ids) {
   $("#runOneBtn").disabled = $("#runAllBtn").disabled = false;
   $("#stopBtn").disabled = true;
   markStepDone("run");
-  refreshFileUI();
+  refreshDatasetSelectors();
   initVarNameCtrls();
 }
 
@@ -507,7 +562,7 @@ function currentPayload() {
   if (!f) return null;
   return {
     file: f,
-    fileLabel: baseName(f.name),
+    fileLabel: fileBase(f.name),
     result: S.results[id] ? S.results[id].result : null,
     stats: S.stats[id] ? S.stats[id].stats : null
   };
@@ -785,21 +840,7 @@ $("#exportAllBtn").onclick = async () => {
   btn.disabled = true; btn.textContent = "导出中…";
   try {
     const zip = new JSZip();
-    const g = S.style.global || globalDefaults();
-    for (const id of ids) {
-      const f = S.files.find(x => x.id === id);
-      const label = baseName(f.name);
-      const folder = zip.folder(label);
-      const payload = { file: f, fileLabel: label, result: S.results[id].result, stats: S.stats[id] ? S.stats[id].stats : null };
-      const ctx = { n: payload.result.all_x.length, nCont: payload.result.cont_vars.length };
-      const types = ["factor", "interaction", "disc", "eco", "risk"].concat(payload.stats ? ["corr"] : []);
-      for (const t of types) {
-        const { st } = ensureStyles(t, ctx);
-        const url = buildExportURL(t, payload, st, g);
-        if (url) zipAddDataURL(folder, `${CHARTS[t].label}_${label}`, url, g);
-        await sleep(20);
-      }
-    }
+    await addImagesToZip(zip, "");
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(blob, `地理探测器图表_${new Date().toISOString().slice(0, 10)}.zip`);
   } catch (e) {
@@ -807,6 +848,25 @@ $("#exportAllBtn").onclick = async () => {
   }
   btn.disabled = false; btn.textContent = "批量导出全部图 (ZIP)";
 };
+
+/* 把所有数据集的图片写入 zip 的 <prefix>图片/<数据集>/ 下 */
+async function addImagesToZip(zip, prefix) {
+  const g = S.style.global || globalDefaults();
+  for (const id of Object.keys(S.results)) {
+    const f = S.files.find(x => x.id === id);
+    const label = fileBase(f.name);
+    const folder = zip.folder((prefix || "") + "图片/" + label);
+    const payload = { file: f, fileLabel: label, result: S.results[id].result, stats: S.stats[id] ? S.stats[id].stats : null };
+    const ctx = { n: payload.result.all_x.length, nCont: payload.result.cont_vars.length };
+    const types = ["factor", "interaction", "disc", "eco", "risk"].concat(payload.stats ? ["corr"] : []);
+    for (const t of types) {
+      const { st } = ensureStyles(t, ctx);
+      const url = buildExportURL(t, payload, st, g);
+      if (url) zipAddDataURL(folder, `${CHARTS[t].label}_${label}`, url, g);
+      await sleep(15);
+    }
+  }
+}
 
 /* ================= ⑤ 结果表格 ================= */
 $("#tableFileSel").onchange = renderTables;
@@ -902,21 +962,92 @@ window.exportTable = function (id, name) {
   if (!T || !T[name]) return;
   const f = S.files.find(x => x.id === id);
   const csv = toCSV(T[name].headers, T[name].rows.map(r => r.map(c => String(c).replace(/<[^>]+>/g, ""))));
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `${name}_${baseName(f.name)}.csv`);
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `${name}_${fileBase(f.name)}.csv`);
 };
-$("#exportAllTablesBtn").onclick = async () => {
+
+/* ============ 一键导出全部结果（分类汇总） ============ */
+// 表名 -> 类别：'stats'（数理统计）/ 'gd'（地理探测器）
+const TABLE_CATEGORY = {
+  "数据清洗报告": "gd", "因子探测结果": "gd", "综合版交互作用探测表": "gd",
+  "生态探测结果": "gd", "离散化最优参数": "gd", "离散化寻优全过程": "gd",
+  "风险探测_分区均值": "gd", "风险探测_显著性矩阵": "gd",
+  "统计_描述与方差": "stats", "统计_VIF共线性": "stats",
+  "统计_pearson相关系数矩阵": "stats", "统计_spearman相关系数矩阵": "stats"
+};
+const stripHtml = s => String(s).replace(/<[^>]+>/g, "");
+
+// 构建一个分类的工作簿：每个表名一个 sheet，纵向堆叠所有数据集（带「数据集」列）
+function buildWorkbook(category) {
   const ids = Object.keys(S.results);
-  if (!ids.length) { alert("没有已完成的探测结果"); return; }
-  const zip = new JSZip();
+  const sheets = {};   // sheetName -> aoa
   for (const id of ids) {
     const f = S.files.find(x => x.id === id);
-    const folder = zip.folder(baseName(f.name));
+    const dsName = fileBase(f.name);
     const T = buildTables(id);
     Object.entries(T).forEach(([name, t]) => {
-      const csv = toCSV(t.headers, t.rows.map(r => r.map(c => String(c).replace(/<[^>]+>/g, ""))));
-      folder.file(`${name}_${baseName(f.name)}.csv`, csv);
+      if (TABLE_CATEGORY[name] !== category) return;
+      const sheetName = name.replace(/^统计_/, "").slice(0, 31);
+      if (!sheets[sheetName]) sheets[sheetName] = [["数据集", ...t.headers]];
+      else sheets[sheetName].push([]);  // 数据集间空行分隔
+      t.rows.forEach((r, ri) => sheets[sheetName].push([ri === 0 ? dsName : "", ...r.map(stripHtml)]));
     });
   }
-  const blob = await zip.generateAsync({ type: "blob" });
-  downloadBlob(blob, `地理探测器结果表格_${new Date().toISOString().slice(0, 10)}.zip`);
+  if (!Object.keys(sheets).length) return null;
+  const wb = XLSX.utils.book_new();
+  Object.entries(sheets).forEach(([sn, aoa]) => {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sn);
+  });
+  return wb;
+}
+
+$("#exportAllBundleBtn").onclick = async () => {
+  const ids = Object.keys(S.results);
+  if (!ids.length) { alert("没有已完成的探测结果，请先到 ③ 地理探测 运行。"); return; }
+  const want = {
+    train: $("#expTrain").checked, images: $("#expImages").checked,
+    stats: $("#expStatsXlsx").checked, gd: $("#expGdXlsx").checked
+  };
+  if (!want.train && !want.images && !want.stats && !want.gd) { alert("请至少勾选一项导出内容"); return; }
+  const btn = $("#exportAllBundleBtn");
+  btn.disabled = true; btn.textContent = "导出中…";
+  const hint = $("#exportBundleHint");
+  try {
+    const zip = new JSZip();
+    // 1. 训练数据表（从后端取回完整 CSV）
+    if (want.train) {
+      hint.textContent = "正在打包训练数据表…";
+      const folder = zip.folder("训练数据表");
+      for (const f of S.files) {
+        try {
+          const r = await fetch(`/api/get_csv?id=${encodeURIComponent(f.id)}`).then(x => x.json());
+          if (r.ok) folder.file(`${fileBase(f.name)}.csv`, "﻿" + r.csv);
+        } catch (e) { console.warn("取训练数据失败", f.name, e); }
+      }
+    }
+    // 2. 所有图片
+    if (want.images) {
+      hint.textContent = "正在渲染并打包图片…";
+      await addImagesToZip(zip, "");
+    }
+    // 3. 数理统计 Excel
+    if (want.stats) {
+      hint.textContent = "正在汇总数理统计结果…";
+      const wb = buildWorkbook("stats");
+      if (wb) { const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }); zip.file("数理统计结果.xlsx", buf); }
+    }
+    // 4. 地理探测器 Excel
+    if (want.gd) {
+      hint.textContent = "正在汇总地理探测器结果…";
+      const wb = buildWorkbook("gd");
+      if (wb) { const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }); zip.file("地理探测器结果.xlsx", buf); }
+    }
+    hint.textContent = "正在生成 ZIP…";
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(blob, `地理探测器分析结果_${new Date().toISOString().slice(0, 10)}.zip`);
+    hint.textContent = "✓ 导出完成";
+  } catch (e) {
+    alert("导出失败：" + e.message);
+    hint.textContent = "";
+  }
+  btn.disabled = false; btn.textContent = "⬇ 导出选中结果 (ZIP)";
 };
