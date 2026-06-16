@@ -182,8 +182,8 @@ async function handleFiles(fileList) {
       showParseRow(`❌ <div class="parse-text">全部解析失败：${errs.join("；")}</div>`, "err");
     }
     if (errs.length && okCount > 0) console.warn("部分文件解析失败:", errs);
+    if (S.rawFiles.length && !Object.keys(S.roles).length) initPanelRoles();
     refreshRawUI();
-    if (S.rawFiles.length && !Object.keys(S.roles).length) autoDetectRoles();
     markStepDone("upload");
   } catch (e) {
     showParseRow(`❌ <div class="parse-text">上传失败：${e.message}</div>`, "err");
@@ -200,10 +200,12 @@ function refreshRawUI() {
       <span class="fmeta">${f.n_rows} 行 × ${f.columns.length} 列</span>
       <button class="btn-danger-text" onclick="removeRaw('${f.id}')">删除</button>
     </div>`).join("");
-  $("#previewFileSel").innerHTML = S.rawFiles.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  const opts = S.rawFiles.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  $("#previewFileSel").innerHTML = opts;
+  $("#panelFileSel").innerHTML = opts;
   $("#varCard").style.display = S.rawFiles.length ? "" : "none";
   $("#previewCard").style.display = S.rawFiles.length ? "" : "none";
-  renderRoleTable();
+  renderPanel();
   renderPreview();
 }
 window.removeRaw = async function (id) {
@@ -228,59 +230,92 @@ function detectedYears() {
   S.rawFiles.forEach(f => f.columns.forEach(c => { const y = detectYear(c); if (y) set.add(y); }));
   return Array.from(set).sort();
 }
-function autoDetectRoles() {
-  S.roles = {}; S.xOrder = [];
-  const bases = unionBases();
-  bases.forEach(b => {
-    const lb = b.toLowerCase();
-    if (lb === "y" || /(^|_)y$/.test(lb)) S.roles[b] = "y";
-    else { S.roles[b] = "cont"; S.xOrder.push(b); }
-  });
-  // 若没有任何 y，把第一个设为 y（并从 X 顺序中移除）
-  if (!Object.values(S.roles).includes("y") && bases[0]) {
-    S.roles[bases[0]] = "y";
-    S.xOrder = S.xOrder.filter(b => b !== bases[0]);
-  }
-  renderRoleTable();
+// 某基名是动态变量（带年份）还是静态变量（常量，不随年份变化）
+function baseKind(base) {
+  let hasYear = false;
+  S.rawFiles.forEach(f => f.columns.forEach(c => {
+    if (isIgnoredField(c)) return;
+    if (baseName(c) !== base) return;
+    if (detectYear(c)) hasYear = true;
+  }));
+  return hasYear ? "dynamic" : "static";
 }
-$("#autoDetectBtn").onclick = autoDetectRoles;
-
 // 自变量在 xOrder 中的序号 -> x1, x2…（按点击顺序）
 function xNameOf(base) {
   const i = S.xOrder.indexOf(base);
   return i >= 0 ? "x" + (i + 1) : "";
 }
-function renderRoleTable() {
+
+// 上传后初始化：自动识别 Y，默认选中全部年份；X 留给用户按顺序点选
+function initPanelRoles() {
+  const bases = unionBases();
+  S.roles = {}; S.xOrder = [];
+  const yb = bases.find(b => b.toLowerCase() === "y" || /(^|_)y$/.test(b.toLowerCase()));
+  if (yb) S.roles[yb] = "y";
+  S.selectedYears = detectedYears().slice();
+}
+
+/* 渲染面板自动解析模块（年份按钮 + Y 下拉 + X 标签） */
+function renderPanel() {
   const bases = unionBases();
   const years = detectedYears();
-  $("#yearInfo").innerHTML = years.length
-    ? `检测到 <b>${years.length}</b> 个年份：${years.join("、")}　→ 拆分为 ${years.length} 个年度数据集；变量角色只在<b>去重基名</b>上设置一次（常量列自动复制到每年）`
-    : `未检测到年份，将作为<b>单个</b>数据集；按所选角色重命名为 y / x1…xn`;
-  $("#roleTable").innerHTML = `<div class="role-grid">` + bases.map(c => {
-    const role = S.roles[c] || "ignore";
-    const cls = role === "y" ? "role-y" : role === "cont" ? "role-cont" : role === "cat" ? "role-cat" : "";
-    const xn = (role === "cont" || role === "cat") ? xNameOf(c) : (role === "y" ? "y" : "");
-    return `<div class="role-item ${cls}">
-      <span class="cname" title="${c}">${c}</span>
-      ${xn ? `<span class="xtag">→ ${xn}</span>` : ""}
-      ${["ignore|忽略", "y|Y", "cont|连续X", "cat|分类X"].map(o => {
-        const [v, lab] = o.split("|");
-        return `<label><input type="radio" name="role_${c}" value="${v}" ${role === v ? "checked" : ""}
-          onchange="setRole('${c.replace(/'/g, "\\'")}','${v}')"> ${lab}</label>`;
-      }).join("")}
-    </div>`;
-  }).join("") + `</div>`;
+  if (!S.selectedYears) S.selectedYears = years.slice();
+  const dyn = bases.filter(b => baseKind(b) === "dynamic");
+  const sta = bases.filter(b => baseKind(b) === "static");
+
+  $("#panelInfo").innerHTML = years.length
+    ? `识别到 <b>${years.length}</b> 个年份（${years.join("、")}），动态变量 ${dyn.length} 个，静态变量 ${sta.length} 个`
+    : `未检测到年份，将作为<b>单个</b>数据集处理；可直接选 Y / X 后拆分`;
+
+  // ① 年份按钮
+  $("#yearBlock").style.display = years.length ? "" : "none";
+  $("#yearButtons").innerHTML = years.map(y =>
+    `<button class="year-btn ${S.selectedYears.includes(y) ? "on" : ""}" onclick="toggleYear('${y}')">${y}</button>`
+  ).join("");
+
+  // ② 因变量 Y 下拉
+  const yBase = Object.keys(S.roles).find(b => S.roles[b] === "y") || "";
+  $("#yBaseSel").innerHTML = `<option value="">(不选择)</option>` +
+    bases.map(b => `<option value="${b}" ${yBase === b ? "selected" : ""}>${b}${baseKind(b) === "static" ? "（静态）" : ""}</option>`).join("");
+
+  // ③ 自变量 X 标签（排除 Y 基名）
+  $("#xChips").innerHTML = bases.filter(b => S.roles[b] !== "y").map(b => {
+    const role = S.roles[b];
+    const xn = xNameOf(b);
+    const kind = baseKind(b);
+    const cls = role === "cont" ? "chip-cont" : role === "cat" ? "chip-cat" : "";
+    const icon = kind === "dynamic" ? "🔄" : "📌";
+    const tip = kind === "dynamic" ? "动态变量（带年份，逐年取值）" : "静态变量（常量，复制到每年）";
+    return `<button class="x-chip ${cls}" onclick="cycleX('${b.replace(/'/g, "\\'")}')" title="${tip}">
+      <span class="chip-ic">${icon}</span>${b}${xn ? `<span class="chip-x">${xn}${role === "cat" ? "·类" : ""}</span>` : ""}</button>`;
+  }).join("");
 }
-window.setRole = function (col, role) {
-  if (role === "y") Object.keys(S.roles).forEach(c => {
-    if (S.roles[c] === "y") { S.roles[c] = "ignore"; S.xOrder = S.xOrder.filter(b => b !== c); }
-  });
-  S.roles[col] = role;
-  // 维护点击顺序：每次设为自变量都移到末尾（严格按点击先后得到 x1,x2…）；取消则移除
-  S.xOrder = S.xOrder.filter(b => b !== col);
-  if (role === "cont" || role === "cat") S.xOrder.push(col);
-  renderRoleTable();
+
+// 年份按钮：切换是否提取该年
+window.toggleYear = function (y) {
+  if (!S.selectedYears) S.selectedYears = detectedYears();
+  if (S.selectedYears.includes(y)) S.selectedYears = S.selectedYears.filter(x => x !== y);
+  else { S.selectedYears.push(y); S.selectedYears.sort(); }
+  renderPanel();
 };
+// 因变量 Y 选择
+$("#yBaseSel").onchange = function () {
+  const b = this.value;
+  Object.keys(S.roles).forEach(k => { if (S.roles[k] === "y") S.roles[k] = "ignore"; });
+  if (b) { S.roles[b] = "y"; S.xOrder = S.xOrder.filter(x => x !== b); }
+  renderPanel();
+};
+// X 标签三态循环：连续X → 分类X → 取消；按点击顺序命名 x1,x2…
+window.cycleX = function (b) {
+  const cur = S.roles[b];
+  const next = cur === "cont" ? "cat" : (cur === "cat" ? "ignore" : "cont");
+  S.roles[b] = next;
+  S.xOrder = S.xOrder.filter(x => x !== b);
+  if (next === "cont" || next === "cat") S.xOrder.push(b);
+  renderPanel();
+};
+// 板文件选择联动预览
+$("#panelFileSel").onchange = function () { $("#previewFileSel").value = this.value; renderPreview(); };
 /* 拆分后供后续流程使用的变量配置（固定为 y / x1…xn） */
 function getVarConfig() {
   if (S.splitMeta) return { y: S.splitMeta.y, cont: S.splitMeta.cont, cat: S.splitMeta.cat, allX: S.splitMeta.cont.concat(S.splitMeta.cat) };
@@ -330,10 +365,11 @@ async function doSplit() {
         if (!info[b]) info[b] = { byYear: {}, constCol: null };
         if (y) info[b].byYear[y] = c; else info[b].constCol = c;
       });
-      // 该表涉及的年份
+      // 该表涉及的年份，并与用户在面板里选中的年份取交集
       const yrSet = new Set();
       [yBase, ...xBases].forEach(b => { if (info[b]) Object.keys(info[b].byYear).forEach(y => yrSet.add(y)); });
-      const years = Array.from(yrSet).sort();
+      const sel = (S.selectedYears && S.selectedYears.length) ? S.selectedYears : Array.from(yrSet);
+      const years = Array.from(yrSet).filter(y => sel.includes(y)).sort();
       const rawBase = fileBase(raw.name).replace(/[_\-\s]+$/g, "");
 
       const colFor = (b, year) => {
