@@ -11,7 +11,8 @@ STORE <- new.env()
 STORE$files <- list()
 STORE$jobs <- list()
 STORE$last_hb <- NULL       # 最近一次浏览器心跳时间
-STORE$hb_timeout <- 12      # 秒：超过此时长收不到心跳则自动停止后端
+STORE$hb_timeout <- 90      # 秒：超过此时长收不到心跳则自动停止后端
+                            # （设 >60s 以兼容浏览器对后台标签页的 setInterval 节流）
 
 # ---- 心跳看门狗：浏览器全部关闭后自动停止后端服务 ----
 # 仅在「曾经收到过心跳」后才会触发，避免启动后还没打开浏览器就退出

@@ -138,6 +138,7 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 13px; }
 .role-item.role-y { border-color: #e6a23c; background: #fdf6ec; }
 .role-item.role-cont { border-color: var(--primary-light); background: #f0f7fd; }
 .role-item.role-cat { border-color: #67c23a; background: #f0f9eb; }
+.role-item .xtag { display: inline-block; background: var(--primary); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
 
 details.tbl-block { margin-bottom: 14px; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; }
 details.tbl-block summary { font-weight: 700; color: var(--primary); cursor: pointer; padding: 4px 0; }

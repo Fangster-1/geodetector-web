@@ -10,6 +10,7 @@ const S = {
   rawFiles: [],         // 原始上传表 {id, name, n_rows, columns, preview}
   files: [],            // 拆分后的训练数据集 {id, name, n_rows, columns, preview}
   roles: {},            // 变量基名 -> 'y' | 'cont' | 'cat' | 'ignore'
+  xOrder: [],           // 被选为自变量的基名，按点击先后顺序 -> 决定 x1,x2… 命名
   splitMeta: null,      // { y:'y', cont:['x1',...], cat:['x2',...], xMap:[{new,base}], years:[] }
   results: {},          // fileId -> {clean_report, result}
   stats: {},            // fileId -> {clean_report, stats}
@@ -101,10 +102,12 @@ function markStepDone(page) {
 })();
 
 /* ---------------- 心跳：浏览器关闭后后端自动停止 ---------------- */
+// 后端超时 90s；前端 15s 一跳，并在标签页重新可见时立即补一跳，
+// 以兼容浏览器对后台标签页 setInterval 的节流（最长约 60s/次）
 function heartbeat() { fetch("/api/heartbeat").catch(() => {}); }
 heartbeat();
-setInterval(heartbeat, 3000);
-// 页面切到后台时也继续心跳（setInterval 在后台会被节流但仍维持），关闭页面则停止
+setInterval(heartbeat, 15000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) heartbeat(); });
 
 /* ================= ① 数据上传 ================= */
 const dz = $("#dropZone"), fi = $("#fileInput");
@@ -115,9 +118,22 @@ dz.ondrop = e => { e.preventDefault(); dz.classList.remove("over"); handleFiles(
 fi.onchange = () => handleFiles(fi.files);
 
 /* ---- 年份/基名工具 ---- */
-// 需要从自变量列表中过滤掉的字段（ArcGIS 导出字段、ID 字段）
-const IGNORE_FIELD = /^(objectid|shape|orig_fid|fid|id)(_|\b|\d|$)/i;
-function isIgnoredField(name) { return IGNORE_FIELD.test(String(name).trim()); }
+// 需要从自变量列表中过滤掉的字段（ArcGIS 系统字段、几何字段、ID 字段）
+const IGNORE_PATTERNS = [
+  /^objectid(\d|_|$)/i,        // OBJECTID, OBJECTID_1, OBJECTID_12
+  /^shape(_|\.|$)/i,           // Shape, Shape_Length, Shape_Area, Shape_Leng
+  /^orig_fid$/i,
+  /^target_fid$/i,
+  /^join_count$/i,
+  /^fid(_|\d|$)/i,             // FID, FID_1
+  /^oid(_|\d|$)/i,             // OID, OID_
+  /^id$/i,                     // 单独的 Id / ID
+  /^geometry$/i, /^geom$/i, /^wkt$/i
+];
+function isIgnoredField(name) {
+  const s = String(name).replace(/^﻿/, "").trim();   // 去 BOM 与空白
+  return IGNORE_PATTERNS.some(re => re.test(s));
+}
 // 检测列名中的年份 token（1900-2099），返回 4 位字符串或 null
 function detectYear(name) {
   const m = String(name).match(/(?:^|[^0-9])((?:19|20)\d{2})(?:[^0-9]|$)/);
@@ -213,31 +229,40 @@ function detectedYears() {
   return Array.from(set).sort();
 }
 function autoDetectRoles() {
-  S.roles = {};
-  unionBases().forEach(b => {
+  S.roles = {}; S.xOrder = [];
+  const bases = unionBases();
+  bases.forEach(b => {
     const lb = b.toLowerCase();
     if (lb === "y" || /(^|_)y$/.test(lb)) S.roles[b] = "y";
-    else S.roles[b] = "cont";
+    else { S.roles[b] = "cont"; S.xOrder.push(b); }
   });
-  // 若没有任何 y，把第一个设为 y
-  if (!Object.values(S.roles).includes("y")) {
-    const first = unionBases()[0]; if (first) S.roles[first] = "y";
+  // 若没有任何 y，把第一个设为 y（并从 X 顺序中移除）
+  if (!Object.values(S.roles).includes("y") && bases[0]) {
+    S.roles[bases[0]] = "y";
+    S.xOrder = S.xOrder.filter(b => b !== bases[0]);
   }
   renderRoleTable();
 }
 $("#autoDetectBtn").onclick = autoDetectRoles;
 
+// 自变量在 xOrder 中的序号 -> x1, x2…（按点击顺序）
+function xNameOf(base) {
+  const i = S.xOrder.indexOf(base);
+  return i >= 0 ? "x" + (i + 1) : "";
+}
 function renderRoleTable() {
   const bases = unionBases();
   const years = detectedYears();
   $("#yearInfo").innerHTML = years.length
-    ? `检测到 <b>${years.length}</b> 个年份：${years.join("、")}　→ 将按年份拆分为 ${years.length} 个数据集（常量列自动复制到每年）`
-    : `未检测到年份后缀，将作为<b>单个</b>数据集处理（直接重命名为 y / x1…xn）`;
+    ? `检测到 <b>${years.length}</b> 个年份：${years.join("、")}　→ 拆分为 ${years.length} 个年度数据集；变量角色只在<b>去重基名</b>上设置一次（常量列自动复制到每年）`
+    : `未检测到年份，将作为<b>单个</b>数据集；按所选角色重命名为 y / x1…xn`;
   $("#roleTable").innerHTML = `<div class="role-grid">` + bases.map(c => {
     const role = S.roles[c] || "ignore";
     const cls = role === "y" ? "role-y" : role === "cont" ? "role-cont" : role === "cat" ? "role-cat" : "";
+    const xn = (role === "cont" || role === "cat") ? xNameOf(c) : (role === "y" ? "y" : "");
     return `<div class="role-item ${cls}">
       <span class="cname" title="${c}">${c}</span>
+      ${xn ? `<span class="xtag">→ ${xn}</span>` : ""}
       ${["ignore|忽略", "y|Y", "cont|连续X", "cat|分类X"].map(o => {
         const [v, lab] = o.split("|");
         return `<label><input type="radio" name="role_${c}" value="${v}" ${role === v ? "checked" : ""}
@@ -247,8 +272,13 @@ function renderRoleTable() {
   }).join("") + `</div>`;
 }
 window.setRole = function (col, role) {
-  if (role === "y") Object.keys(S.roles).forEach(c => { if (S.roles[c] === "y") S.roles[c] = "ignore"; });
+  if (role === "y") Object.keys(S.roles).forEach(c => {
+    if (S.roles[c] === "y") { S.roles[c] = "ignore"; S.xOrder = S.xOrder.filter(b => b !== c); }
+  });
   S.roles[col] = role;
+  // 维护点击顺序：每次设为自变量都移到末尾（严格按点击先后得到 x1,x2…）；取消则移除
+  S.xOrder = S.xOrder.filter(b => b !== col);
+  if (role === "cont" || role === "cat") S.xOrder.push(col);
   renderRoleTable();
 };
 /* 拆分后供后续流程使用的变量配置（固定为 y / x1…xn） */
@@ -269,22 +299,19 @@ function renderPreview() {
 /* ---- 拆分为年度数据集 ---- */
 $("#splitBtn").onclick = doSplit;
 async function doSplit() {
-  const baseRole = {};
-  Object.entries(S.roles).forEach(([b, r]) => baseRole[b] = r);
-  const yBase = Object.keys(baseRole).find(b => baseRole[b] === "y");
-  const contBases = Object.keys(baseRole).filter(b => baseRole[b] === "cont");
-  const catBases = Object.keys(baseRole).filter(b => baseRole[b] === "cat");
-  const xBases = contBases.concat(catBases);
+  const yBase = Object.keys(S.roles).find(b => S.roles[b] === "y");
+  // X 严格按点击顺序（xOrder），仅保留仍为自变量的基名
+  const xBases = S.xOrder.filter(b => S.roles[b] === "cont" || S.roles[b] === "cat");
   if (!yBase) { alert("请先指定一个因变量 Y"); return; }
   if (!xBases.length) { alert("请至少指定一个自变量 X"); return; }
 
-  // 新列名映射：y, x1, x2 ... 顺序 = 连续在前、分类在后
+  // 新列名映射：y, x1, x2 ... 顺序 = 点击先后
   const newCols = ["y"], xMap = [], contNew = [], catNew = [];
   xBases.forEach((b, i) => {
     const nm2 = "x" + (i + 1);
     newCols.push(nm2);
     xMap.push({ new: nm2, base: b });
-    if (catBases.includes(b)) catNew.push(nm2); else contNew.push(nm2);
+    if (S.roles[b] === "cat") catNew.push(nm2); else contNew.push(nm2);
   });
 
   $("#splitBtn").disabled = true; $("#splitHint").textContent = "拆分中…";
