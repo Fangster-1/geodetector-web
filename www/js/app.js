@@ -130,8 +130,12 @@ const IGNORE_PATTERNS = [
   /^id$/i,                     // 单独的 Id / ID
   /^geometry$/i, /^geom$/i, /^wkt$/i
 ];
+// 归一化字段名：去 BOM/空白，并剥离 ArcGIS 常见的尾缀装饰（如 "OBJECTID *"、"Shape *"）
+function normalizeField(name) {
+  return String(name).replace(/^﻿/, "").trim().replace(/[\s*]+$/g, "");
+}
 function isIgnoredField(name) {
-  const s = String(name).replace(/^﻿/, "").trim();   // 去 BOM 与空白
+  const s = normalizeField(name);
   return IGNORE_PATTERNS.some(re => re.test(s));
 }
 // 检测列名中的年份 token（1900-2099），返回 4 位字符串或 null
@@ -205,12 +209,51 @@ function refreshRawUI() {
   $("#panelFileSel").innerHTML = opts;
   $("#varCard").style.display = S.rawFiles.length ? "" : "none";
   $("#previewCard").style.display = S.rawFiles.length ? "" : "none";
+  renderCacheBar();
   renderPanel();
   renderPreview();
 }
+// 缓存状态条
+function renderCacheBar() {
+  const nRaw = S.rawFiles.length, nDs = S.files.length;
+  const nRes = Object.keys(S.results).length, nStat = Object.keys(S.stats).length;
+  const has = nRaw || nDs || nRes || nStat;
+  $("#cacheBar").style.display = has ? "" : "none";
+  $("#cacheStatus").innerHTML = `缓存：原始表 <b>${nRaw}</b> 个 ｜ 拆分数据集 <b>${nDs}</b> 个 ｜ 已探测 <b>${nRes}</b> ｜ 已统计 <b>${nStat}</b>`;
+}
+// 清空所有「下游」缓存（拆分数据集、结果、统计、图表、表格）；保留原始表
+async function clearDownstream() {
+  for (const f of S.files) { try { await api("/api/remove", { id: f.id }); } catch (e) {} }
+  S.files = []; S.results = {}; S.stats = {}; S.splitMeta = null;
+  ["statsFileSel", "runFileSel", "chartFileSel", "tableFileSel"].forEach(id => { const el = $("#" + id); if (el) el.innerHTML = ""; });
+  $("#splitCard").style.display = "none";
+  $("#statsResultArea") && ($("#statsResultArea").style.display = "none");
+  $("#tablesArea") && ($("#tablesArea").innerHTML = "");
+  if (S.charts.main) { S.charts.main.clear(); }
+  const cm = $("#chartMsg"); if (cm) cm.textContent = "请先上传数据并运行地理探测。";
+  const mc = $("#mainChart"); if (mc) mc.style.display = "none";
+}
 window.removeRaw = async function (id) {
-  await api("/api/remove", { id });
-  S.rawFiles = S.rawFiles.filter(f => f.id !== id);
+  const f = S.rawFiles.find(x => x.id === id);
+  if (!confirm(`删除原始表「${f ? f.name : id}」？\n其拆分出的数据集、统计与探测结果等缓存将一并清除。`)) return;
+  try { await api("/api/remove", { id }); } catch (e) {}
+  S.rawFiles = S.rawFiles.filter(x => x.id !== id);
+  // 删除原始表 → 下游派生数据全部失效，级联清理
+  await clearDownstream();
+  // 变量角色随原始表变化：删光后彻底重置，避免旧选择残留到下次上传
+  if (!S.rawFiles.length) { S.roles = {}; S.xOrder = []; S.selectedYears = null; }
+  $("#splitHint").textContent = "";
+  refreshRawUI();
+};
+// 清空全部缓存
+$("#clearAllBtn").onclick = async function () {
+  if (!confirm("确认清空全部缓存？\n将删除所有原始表、拆分数据集、统计与探测结果，回到初始状态。")) return;
+  try { await api("/api/clear_all", {}); } catch (e) {}
+  await clearDownstream();
+  S.rawFiles = []; S.roles = {}; S.xOrder = []; S.selectedYears = null;
+  $("#splitHint").textContent = "";
+  $("#previewTable").innerHTML = "";
+  clearParseRow();
   refreshRawUI();
 };
 
@@ -278,16 +321,21 @@ function renderPanel() {
   $("#yBaseSel").innerHTML = `<option value="">(不选择)</option>` +
     bases.map(b => `<option value="${b}" ${yBase === b ? "selected" : ""}>${b}${baseKind(b) === "static" ? "（静态）" : ""}</option>`).join("");
 
-  // ③ 自变量 X 标签（排除 Y 基名）
+  // ③ 自变量 X 标签（排除 Y 基名）。单击=选为/取消 X；选中后点右侧「连续/分类」标签切换类型
   $("#xChips").innerHTML = bases.filter(b => S.roles[b] !== "y").map(b => {
     const role = S.roles[b];
+    const sel = role === "cont" || role === "cat";
     const xn = xNameOf(b);
     const kind = baseKind(b);
     const cls = role === "cont" ? "chip-cont" : role === "cat" ? "chip-cat" : "";
     const icon = kind === "dynamic" ? "🔄" : "📌";
     const tip = kind === "dynamic" ? "动态变量（带年份，逐年取值）" : "静态变量（常量，复制到每年）";
-    return `<button class="x-chip ${cls}" onclick="cycleX('${b.replace(/'/g, "\\'")}')" title="${tip}">
-      <span class="chip-ic">${icon}</span>${b}${xn ? `<span class="chip-x">${xn}${role === "cat" ? "·类" : ""}</span>` : ""}</button>`;
+    const esc = b.replace(/'/g, "\\'");
+    const typeBadge = sel
+      ? `<span class="chip-type" onclick="event.stopPropagation();toggleXType('${esc}')" title="点击切换 连续/分类">${role === "cat" ? "分类" : "连续"}</span>`
+      : "";
+    return `<button class="x-chip ${cls}" onclick="toggleX('${esc}')" title="${tip}">
+      <span class="chip-ic">${icon}</span>${b}${xn ? `<span class="chip-x">${xn}</span>` : ""}${typeBadge}</button>`;
   }).join("");
 }
 
@@ -305,13 +353,18 @@ $("#yBaseSel").onchange = function () {
   if (b) { S.roles[b] = "y"; S.xOrder = S.xOrder.filter(x => x !== b); }
   renderPanel();
 };
-// X 标签三态循环：连续X → 分类X → 取消；按点击顺序命名 x1,x2…
-window.cycleX = function (b) {
+// 单击 X 标签：选为自变量（默认连续）/ 取消；按点击顺序命名 x1,x2…
+window.toggleX = function (b) {
   const cur = S.roles[b];
-  const next = cur === "cont" ? "cat" : (cur === "cat" ? "ignore" : "cont");
-  S.roles[b] = next;
   S.xOrder = S.xOrder.filter(x => x !== b);
-  if (next === "cont" || next === "cat") S.xOrder.push(b);
+  if (cur === "cont" || cur === "cat") { S.roles[b] = "ignore"; }
+  else { S.roles[b] = "cont"; S.xOrder.push(b); }
+  renderPanel();
+};
+// 点击「连续/分类」标签：切换该自变量的类型（不改变顺序）
+window.toggleXType = function (b) {
+  if (S.roles[b] === "cont") S.roles[b] = "cat";
+  else if (S.roles[b] === "cat") S.roles[b] = "cont";
   renderPanel();
 };
 // 板文件选择联动预览
@@ -438,6 +491,7 @@ function refreshDatasetSelectors() {
   const doneOpts = S.files.filter(f => S.results[f.id]).map(f => `<option value="${f.id}">${f.name}</option>`).join("");
   $("#chartFileSel").innerHTML = doneOpts || opts;
   $("#tableFileSel").innerHTML = doneOpts || opts;
+  renderCacheBar();
 }
 
 /* ================= ② 统计检验 ================= */
@@ -462,6 +516,7 @@ async function runStats(ids) {
   $("#statsProgress").textContent = "检验完成 ✓";
   markStepDone("stats");
   showStats($("#statsFileSel").value);
+  renderCacheBar();
 }
 $("#statsFileSel").onchange = e => showStats(e.target.value);
 $("#corrMethodSel").onchange = () => showStats($("#statsFileSel").value);

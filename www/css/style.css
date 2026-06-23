@@ -195,6 +195,13 @@ details.sub-group[open] summary { color: var(--primary); border-bottom: 1px dash
 .x-chip .chip-x { background: rgba(255,255,255,.35); padding: 0 7px; border-radius: 10px; font-size: 12px; font-weight: 700; }
 .x-chip.chip-cont { background: var(--primary); border-color: var(--primary); color: #fff; }
 .x-chip.chip-cat { background: #1d9a6c; border-color: #1d9a6c; color: #fff; }
+.x-chip .chip-type { background: rgba(255,255,255,.92); color: var(--text); padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; cursor: pointer; border: 1px solid rgba(0,0,0,.15); }
+.x-chip .chip-type:hover { background: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.5); }
+
+/* 缓存管理条 */
+.cache-bar { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 8px 12px; background: #fbfdff; border: 1px dashed var(--border); border-radius: 8px; }
+.cache-bar .hint { margin: 0; }
+.cache-bar b { color: var(--primary); }
 
 /* 拆分结果 */
 .split-grid { display: flex; flex-wrap: wrap; gap: 8px; }

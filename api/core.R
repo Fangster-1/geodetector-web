@@ -257,12 +257,16 @@ run_geodetector <- function(df, y, cont_vars, cat_vars,
         type_en = g_inter$interaction[i],
         type_cn = .interaction_cn(g_inter$interaction[i]),
         relation = {
-          qs <- q1 + q2; qmax <- max(q1, q2); qmin <- min(q1, q2)
-          if (q12 > qs) "C > A+B"
-          else if (q12 == qs) "C = A+B"
-          else if (q12 > qmax) "Max(A,B) < C < A+B"
-          else if (q12 > qmin) "Min(A,B) < C < Max(A,B)"
-          else "C < Min(A,B)"
+          # 防护：任一 q 值为 NA 时不做大小比较，避免 if(NA) 崩溃
+          if (is.na(q1) || is.na(q2) || is.na(q12)) "—"
+          else {
+            qs <- q1 + q2; qmax <- max(q1, q2); qmin <- min(q1, q2)
+            if (q12 > qs) "C > A+B"
+            else if (q12 == qs) "C = A+B"
+            else if (q12 > qmax) "Max(A,B) < C < A+B"
+            else if (q12 > qmin) "Min(A,B) < C < Max(A,B)"
+            else "C < Min(A,B)"
+          }
         }
       )
     })

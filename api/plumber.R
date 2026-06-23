@@ -132,6 +132,17 @@ function(req) {
   list(ok = TRUE)
 }
 
+#* 清空全部缓存（原始表、拆分数据集、运行中的任务）
+#* @post /api/clear_all
+#* @serializer unboxedJSON
+function() {
+  # 杀掉所有未结束的后台任务
+  for (j in STORE$jobs) try(if (!is.null(j$proc) && j$proc$is_alive()) j$proc$kill(), silent = TRUE)
+  STORE$files <- list()
+  STORE$jobs <- list()
+  list(ok = TRUE)
+}
+
 #* 按指定列拆分原始表为多个年度数据集（列选择/重命名逻辑由前端给出）
 #* body: { id, datasets: [{ name, src_cols:[...], new_cols:[...] }] }
 #* @post /api/split

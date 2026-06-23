@@ -7,14 +7,14 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>地理探测器分析与制图平台</title>
-<link rel="stylesheet" href="css/style.css?v=7">
+<link rel="stylesheet" href="css/style.css?v=8">
 <script src="lib/echarts.min.js"></script>
 <script src="lib/jszip.min.js"></script>
 </head>
 <body>
 
 <header class="topbar">
-  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化 · v7</span></div>
+  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化 · v8</span></div>
   <div id="serverStatus" class="server-status">连接中…</div>
 </header>
 
@@ -39,6 +39,10 @@
     </div>
     <div id="parseStatus"></div>
     <div id="fileList"></div>
+    <div id="cacheBar" class="cache-bar" style="display:none">
+      <span id="cacheStatus" class="hint"></span>
+      <button class="btn btn-danger btn-sm" id="clearAllBtn">🗑 清空全部缓存</button>
+    </div>
   </div>
 
   <div class="card" id="previewCard" style="display:none">
@@ -67,7 +71,7 @@
       </div>
       <div class="panel-block" style="flex:1">
         <div class="panel-label">③ 自变量 X（按点击顺序命名为 x1, x2…）
-          <span class="hint-inline">单击=连续X，再点切换为分类X，再点取消</span>
+          <span class="hint-inline">单击变量=选/取消；选中后点右侧「连续/分类」标签切换类型</span>
         </div>
         <div id="xChips" class="x-chips"></div>
       </div>
@@ -232,7 +236,7 @@
 </main>
 
 <script src="lib/xlsx.full.min.js"></script>
-<script src="js/charts.js?v=7"></script>
-<script src="js/app.js?v=7"></script>
+<script src="js/charts.js?v=8"></script>
+<script src="js/app.js?v=8"></script>
 </body>
 </html>
