@@ -1,8 +1,19 @@
 # 测试与临时数据
 _testdata/
 _diag.R
+_*.R
 *.tmp
 *.log
+
+# ⚠ 授权私钥与激活记录：绝不能进入公开仓库！
+tools/keygen_private.txt
+license.dat
+*.private.txt
+
+# 打包产物
+installer/Output/
+dist/
+R-portable/
 
 # R 会话文件
 .Rproj.user/

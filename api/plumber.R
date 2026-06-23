@@ -5,6 +5,14 @@
 
 # APP_ROOT 由 run_app.R 在启动时注入全局环境
 source(file.path(APP_ROOT, "api", "core.R"), encoding = "UTF-8")
+source(file.path(APP_ROOT, "license", "license.R"), encoding = "UTF-8")
+
+# 计算类接口的授权守卫：未激活时拒绝
+.require_license <- function() {
+  if (!lic_is_activated())
+    return(list(ok = FALSE, locked = TRUE, error = "软件未激活，请在激活页输入激活码。"))
+  NULL
+}
 
 # 内存数据仓库：存放已上传解析的数据表 + 后台计算任务
 STORE <- new.env()
@@ -58,10 +66,24 @@ function() list(ok = TRUE, time = format(Sys.time()))
 #* @serializer unboxedJSON
 function() { STORE$last_hb <- Sys.time(); list(ok = TRUE) }
 
+#* 授权状态（机器码 + 是否已激活）
+#* @get /api/license
+#* @serializer unboxedJSON
+function() lic_status()
+
+#* 提交激活码
+#* @post /api/activate
+#* @serializer unboxedJSON
+function(req) {
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  lic_activate(body$code)
+}
+
 #* 上传文件（JSON: {files: [{name, b64}]}），解析并缓存
 #* @post /api/upload
 #* @serializer unboxedJSON
 function(req) {
+  g <- .require_license(); if (!is.null(g)) return(g)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   out <- lapply(body$files, function(f) {
     tryCatch({
@@ -88,6 +110,7 @@ function(req) {
 #* @post /api/stats
 #* @serializer unboxedJSON
 function(req) {
+  g <- .require_license(); if (!is.null(g)) return(g)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   f <- STORE$files[[body$id]]
   if (is.null(f)) return(list(ok = FALSE, error = "文件不存在，请重新上传。"))
@@ -104,6 +127,7 @@ function(req) {
 #* @post /api/run
 #* @serializer unboxedJSON
 function(req) {
+  g <- .require_license(); if (!is.null(g)) return(g)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   f <- STORE$files[[body$id]]
   if (is.null(f)) return(list(ok = FALSE, error = "文件不存在，请重新上传。"))
@@ -148,6 +172,7 @@ function() {
 #* @post /api/split
 #* @serializer unboxedJSON
 function(req) {
+  g <- .require_license(); if (!is.null(g)) return(g)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   f <- STORE$files[[body$id]]
   if (is.null(f)) return(list(ok = FALSE, error = "原始文件不存在，请重新上传。"))
@@ -176,6 +201,7 @@ function(req) {
 #* @get /api/get_csv
 #* @serializer unboxedJSON
 function(id = "") {
+  g <- .require_license(); if (!is.null(g)) return(g)
   f <- STORE$files[[id]]
   if (is.null(f)) return(list(ok = FALSE, error = "数据集不存在。"))
   tmp <- tempfile(fileext = ".csv")
@@ -194,6 +220,7 @@ function(id = "") {
 #* @post /api/run_start
 #* @serializer unboxedJSON
 function(req) {
+  g <- .require_license(); if (!is.null(g)) return(g)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   f <- STORE$files[[body$id]]
   if (is.null(f)) return(list(ok = FALSE, error = "文件不存在，请重新上传。"))

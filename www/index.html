@@ -7,14 +7,31 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>地理探测器分析与制图平台</title>
-<link rel="stylesheet" href="css/style.css?v=8">
+<link rel="stylesheet" href="css/style.css?v=9">
 <script src="lib/echarts.min.js"></script>
 <script src="lib/jszip.min.js"></script>
 </head>
 <body>
 
+<!-- ============ 激活遮罩（未授权时显示，锁定整个应用） ============ -->
+<div id="licenseGate" class="lic-gate" style="display:none">
+  <div class="lic-card">
+    <h2>🔒 软件激活</h2>
+    <p class="lic-desc">本软件采用一机一码授权，需激活后使用。请将下方<b>机器码</b>发送给作者获取<b>激活码</b>。</p>
+    <label class="lic-label">本机机器码（点击复制）</label>
+    <div class="lic-mc" id="licMachineCode" title="点击复制">加载中…</div>
+    <label class="lic-label">激活码</label>
+    <textarea id="licActInput" class="lic-input" rows="3" placeholder="粘贴作者发来的激活码（分隔符可有可无）"></textarea>
+    <div class="lic-row">
+      <button class="btn btn-primary" id="licActivateBtn">激活</button>
+      <span id="licMsg" class="lic-msg"></span>
+    </div>
+    <p class="lic-foot">激活码与本机绑定，换电脑或重装系统需重新获取。</p>
+  </div>
+</div>
+
 <header class="topbar">
-  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化 · v8</span></div>
+  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化 · v9</span></div>
   <div id="serverStatus" class="server-status">连接中…</div>
 </header>
 
@@ -236,7 +253,7 @@
 </main>
 
 <script src="lib/xlsx.full.min.js"></script>
-<script src="js/charts.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<script src="js/charts.js?v=9"></script>
+<script src="js/app.js?v=9"></script>
 </body>
 </html>

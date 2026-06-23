@@ -88,6 +88,40 @@ function markStepDone(page) {
   if (el) el.classList.add("done");
 }
 
+/* ---------------- 软件激活（授权门禁） ---------------- */
+async function checkLicense() {
+  let st;
+  try { st = await fetch("/api/license").then(x => x.json()); }
+  catch (e) { return; }   // 服务未起时由 ping 处理
+  if (st.activated) { $("#licenseGate").style.display = "none"; return; }
+  // 未激活：显示遮罩
+  $("#licMachineCode").textContent = st.machine_display || "采集失败";
+  $("#licenseGate").style.display = "flex";
+}
+$("#licMachineCode").onclick = () => {
+  const t = $("#licMachineCode").textContent;
+  navigator.clipboard && navigator.clipboard.writeText(t).then(
+    () => { const m = $("#licMsg"); m.textContent = "机器码已复制"; m.className = "lic-msg ok"; },
+    () => {});
+};
+$("#licActivateBtn").onclick = async () => {
+  const code = $("#licActInput").value.trim();
+  const msg = $("#licMsg");
+  if (!code) { msg.textContent = "请粘贴激活码"; msg.className = "lic-msg err"; return; }
+  $("#licActivateBtn").disabled = true; msg.textContent = "验证中…"; msg.className = "lic-msg";
+  try {
+    const r = await fetch("/api/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).then(x => x.json());
+    if (r.ok && r.activated) {
+      msg.textContent = "✓ 激活成功，正在进入…"; msg.className = "lic-msg ok";
+      setTimeout(() => { $("#licenseGate").style.display = "none"; }, 700);
+    } else {
+      msg.textContent = "✗ " + (r.error || "激活失败"); msg.className = "lic-msg err";
+    }
+  } catch (e) { msg.textContent = "✗ 网络错误：" + e.message; msg.className = "lic-msg err"; }
+  $("#licActivateBtn").disabled = false;
+};
+checkLicense();
+
 /* ---------------- 服务器状态 ---------------- */
 (async function ping() {
   try {
