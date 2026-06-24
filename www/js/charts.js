@@ -12,6 +12,10 @@ const PALETTES = {
   "Spectral":   ["#5E4FA2", "#3288BD", "#66C2A5", "#FDAE61", "#D53E4F"],
   "Viridis":    ["#440154", "#414487", "#2a788e", "#22a884", "#7ad151", "#fde725"],
   "RdBu (相关性)": ["#2166ac", "#67a9cf", "#d1e5f0", "#f7f7f7", "#fddbc7", "#ef8a62", "#b2182b"],
+  "RdYlBu (蓝黄红)": ["#4575b4", "#74add1", "#abd9e9", "#e0f3f8", "#ffffbf", "#fee090", "#fdae61", "#f46d43", "#d73027"],
+  "蓝橙红(GD论文)": ["#3b6ea5", "#6ba3c8", "#a9cfe3", "#dceaf2", "#f7f0e6", "#fbd9a8", "#f3a460", "#dd6a3e", "#b8332a"],
+  "深红青": ["#2a6b7e", "#4d93a3", "#a9cdd6", "#dde9ec", "#ececec", "#f4cdd8", "#dd7a98", "#c13862", "#9e1b42"],
+  "蓝橙渐变": ["#2c7bb6", "#74add1", "#abd9e9", "#e8f3f6", "#fdf2e0", "#fdc980", "#fa9a4e", "#e96030", "#c2331f"],
   "热力红":     ["#fff5f0", "#fcbba1", "#fb6a4a", "#cb181d", "#67000d"],
   "蓝绿":       ["#f7fcf0", "#ccebc5", "#7bccc4", "#2b8cbe", "#084081"],
   "大地色":     ["#543005", "#bf812d", "#f6e8c3", "#80cdc1", "#003c30"],
@@ -68,13 +72,15 @@ function globalDefaults() {
   return {
     fontFamily: '"Times New Roman", SimSun',
     exportFormat: "png",
-    pixelRatio: 3
+    dpi: 600                 // 导出分辨率（DPI），导出时 pixelRatio = dpi/96
   };
 }
+// 由 DPI 换算导出像素倍率（以屏幕 96dpi 为基准）
+function dpiToRatio(g) { return Math.max(0.5, (g.dpi || (g.pixelRatio ? g.pixelRatio * 96 : 600)) / 96); }
 const GLOBAL_SCHEMA = [
   { k: "fontFamily", label: "字体（中英文混排）", t: "sel", opts: FONT_OPTIONS },
   { k: "exportFormat", label: "导出图片格式", t: "sel", opts: [["PNG (位图,推荐)", "png"], ["JPG (位图)", "jpeg"], ["SVG (矢量,可AI编辑)", "svg"]] },
-  { k: "pixelRatio", label: "导出分辨率倍数", t: "sel", opts: [["1×", 1], ["2×", 2], ["3× (推荐)", 3], ["4×", 4], ["6×", 6]] }
+  { k: "dpi", label: "导出分辨率 DPI", t: "num", min: 72, max: 1200, step: 50 }
 ];
 
 /* 文本样式快捷函数：g=全局(字体)，size、color 来自每图样式 */
@@ -137,7 +143,7 @@ function axisDefaults(prefix, kind, over) {
 function axisSchema(prefix, groupLabel, kind) {
   const g = groupLabel;
   const s = [
-    { k: prefix + "LineShow", label: "显示坐标轴", t: "chk", g },
+    { k: prefix + "LineShow", label: "显示整条坐标轴", t: "chk", g },
     { k: prefix + "Name", label: "轴标题文字", t: "txt", g },
     { k: prefix + "NameSize", label: "轴标题字号", t: "num", min: 6, max: 36, g },
     { k: prefix + "NameColor", label: "轴标题颜色", t: "color", g },
@@ -164,6 +170,8 @@ function axisSchema(prefix, groupLabel, kind) {
 function buildAxis(g, st, prefix, base) {
   base = base || {};
   const ax = {
+    // “显示坐标轴”为整轴总开关：关闭则该轴（轴线+刻度+标签+轴标题）整体隐藏
+    show: st[prefix + "LineShow"] !== false,
     type: base.type || "category",
     axisLabel: TS(g, base.labelSize != null ? base.labelSize : st[prefix + "LabelSize"],
                   st[prefix + "LabelColor"],
@@ -220,6 +228,52 @@ function buildGrid(st, autoGrid) {
   return autoGrid;
 }
 
+/* ---- 自定义色标（无缝拼接色块 + 刻度标签），返回 graphic 元素数组 ----
+ * geo: { x, y, len, thick, orient('vertical'|'horizontal'), min, max, endpointsOnly }
+ * 连续：用许多薄块拟合平滑渐变；分段：vmPieces 个紧贴色块；均无空白。
+ * endpointsOnly=true 时只标注首尾两个数值（用于空白三角区的小色标）。 */
+function buildColorbar(g, st, geo) {
+  const els = [];
+  const pal = paletteOf(st);
+  const vert = geo.orient === "vertical";
+  const piece = st.vmType === "piecewise";
+  const nSeg = piece ? Math.max(2, st.vmPieces) : 96;
+  const dec = Math.min(st.decimals, 3);
+  const font = `${st.legendSize}px ${g.fontFamily}`;
+  const fill = st.xLabelColor || "#000";
+  // 色块：相邻块重叠 0.6px 杜绝亚像素缝隙
+  for (let i = 0; i < nSeg; i++) {
+    const tc = piece ? (nSeg > 1 ? i / (nSeg - 1) : 0.5) : (i + 0.5) / nSeg;
+    const col = lerpPalette(pal, tc);
+    let rx, ry, rw, rh;
+    if (vert) { rh = geo.len / nSeg; rw = geo.thick; rx = geo.x; ry = geo.y + geo.len - (i + 1) * rh; }
+    else { rw = geo.len / nSeg; rh = geo.thick; rx = geo.x + i * rw; ry = geo.y; }
+    els.push({ type: "rect", silent: true, z: 6,
+      shape: { x: rx, y: ry, width: rw + 0.6, height: rh + 0.6 }, style: { fill: col } });
+  }
+  // 色标外框
+  els.push({ type: "rect", silent: true, z: 7,
+    shape: { x: geo.x, y: geo.y, width: vert ? geo.thick : geo.len, height: vert ? geo.len : geo.thick },
+    style: { fill: "none", stroke: "#555", lineWidth: 0.8 } });
+  // 刻度标签：endpointsOnly→只首尾；分段→各边界值；连续→等分 5 段共 6 个刻度
+  const nLab = geo.endpointsOnly ? 1 : (piece ? nSeg : 5);
+  for (let k = 0; k <= nLab; k++) {
+    const val = geo.min + (geo.max - geo.min) * (k / nLab);
+    if (vert) {
+      const ty = geo.y + geo.len - (k / nLab) * geo.len;
+      els.push({ type: "text", z: 7, left: geo.x + geo.thick + 6, top: ty,
+        style: { text: val.toFixed(dec), textVerticalAlign: "middle", textAlign: "left", font, fill } });
+      els.push({ type: "line", silent: true, z: 7,
+        shape: { x1: geo.x + geo.thick, y1: ty, x2: geo.x + geo.thick + 4, y2: ty }, style: { stroke: fill, lineWidth: 0.8 } });
+    } else {
+      const tx = geo.x + (k / nLab) * geo.len;
+      els.push({ type: "text", z: 7, left: tx, top: geo.y + geo.thick + 5,
+        style: { text: val.toFixed(dec), textVerticalAlign: "top", textAlign: "center", font, fill } });
+    }
+  }
+  return els;
+}
+
 /* ---- 通用控件片段 ---- */
 const SC_TITLE = [
   { k: "titleShow", label: "显示标题", t: "chk", g: "标题" },
@@ -253,6 +307,50 @@ const SC_CANVAS = [
   { k: "width", label: "画布宽 (px)", t: "num", min: 300, max: 3600, g: "画布" },
   { k: "height", label: "画布高 (px)", t: "num", min: 300, max: 3600, g: "画布" }
 ];
+
+/* ---------------- 热图按因子数 n 自适应：单元格大小、画布、字号 ----------------
+ * 5~16 个因子都给出合理的格子像素，据此自动算画布尺寸与字号。
+ * margins 与画布尺寸共用同一套公式，保证 plotW = n*cell 精确成立。 */
+function heatmapMetrics(n) {
+  const cell = clamp(Math.round(780 / Math.max(n, 1)), 42, 96);  // n=5→96, n=8→88, n=12→65, n=16→49
+  return {
+    cell,
+    plot: n * cell,
+    labelSize: clamp(Math.round(cell * 0.30), 13, 24),   // 坐标轴/对角线标签
+    valueSize: clamp(Math.round(cell * 0.27), 11, 20),   // 格内数值
+    titleSize: clamp(Math.round(cell * 0.34 + 10), 20, 32)
+  };
+}
+// 交互热图的绘图区边距（依标签模式 / 色标位置 / n），自适应与 build 共用
+function imMargins(st, n) {
+  const m = heatmapMetrics(n);
+  const diagMode = st.labelMode === "diagonal";
+  const showY = !diagMode && st.yLineShow !== false;   // 坐标轴模式且 Y 轴未隐藏
+  const showX = !diagMode && st.xLineShow !== false;
+  // 底部列变量名：坐标轴模式看 X 轴开关；对角线模式也在底部显示“另一组变量”
+  const showColLabels = diagMode || showX;
+  const rot = Math.abs(st.xLabelRotate || 0);
+  const colBase = showColLabels ? (rot > 60 ? m.labelSize * 4.0 : rot > 25 ? m.labelSize * 3.0 : m.labelSize * 1.9) : 0;
+  return {
+    left:   diagMode ? 34 : (showY ? Math.round(m.labelSize * 4.0 + 28) : 50),
+    right:  st.vmPos === "right" ? Math.round(m.labelSize * 3.6 + 64) : (diagMode ? Math.round(m.labelSize * 4 + 20) : 46),
+    top:    st.titleShow ? m.titleSize + 46 : 28,
+    bottom: Math.round(colBase + 30) + (st.showCaption ? 26 : 0) +
+            (st.vmPos === "bottom" ? Math.round(m.labelSize * 3.2) : 0)
+  };
+}
+// 渲染前写回交互热图的自适应画布与字号（保留用户的其它样式）
+function applyInteractionAutoSize(st, n) {
+  if (st.autoSize === false) return;
+  const m = heatmapMetrics(n), mar = imMargins(st, n);
+  st.width = m.plot + mar.left + mar.right;
+  st.height = m.plot + mar.top + mar.bottom;
+  st.titleSize = m.titleSize;
+  st.labelSize = m.valueSize;
+  st.xLabelSize = m.labelSize; st.yLabelSize = m.labelSize;
+  st.legendSize = clamp(m.labelSize - 1, 12, 19);
+  st.diagLabelSize = 0;
+}
 
 /* ---------------- 多面板网格布局（disc / risk 共用，间距可调） ---------------- */
 function panelLayout(nPanel, cols, opt) {
@@ -289,6 +387,7 @@ const CHARTS = {
           colorMode: "gradient", barColor: "#0c5496",
           barWidth: 60, barBorderWidth: 0.6, barBorderColor: "#333333",
           showValues: true, showSig: true, labelPos: "outside",
+          showCaption: true, captionText: "注：*** P < 0.001   ** P < 0.01   * P < 0.05",
           width: clamp(120 + ctx.n * 90, 560, 1400), height: 560
         });
     },
@@ -304,6 +403,8 @@ const CHARTS = {
       { k: "showValues", label: "显示数值", t: "chk", g: "数值标签" },
       { k: "showSig", label: "显示显著性 (*)", t: "chk", g: "数值标签" },
       { k: "labelPos", label: "数值位置", t: "sel", opts: [["柱外", "outside"], ["柱内顶部", "insideTop"], ["柱内", "inside"]], g: "数值标签" },
+      { k: "showCaption", label: "显示注释行", t: "chk", g: "注释" },
+      { k: "captionText", label: "注释内容", t: "txt", g: "注释" },
       ...SC_LABEL,
       ...axisSchema("cat", "类目轴 (因子)", "cat"),
       ...axisSchema("val", "数值轴 (q 值)", "val"),
@@ -326,12 +427,20 @@ const CHARTS = {
       const autoGrid = {
         left: horiz ? 100 : 84, right: 40,
         top: st.titleShow ? st.titleSize + 40 : 30,
-        bottom: horiz ? 62 : ((st.catLabelRotate || 0) > 25 ? 90 : 72)
+        bottom: (horiz ? 62 : ((st.catLabelRotate || 0) > 25 ? 90 : 72)) + (st.showCaption ? 28 : 0)
       };
+      const graphics = [];
+      if (st.showCaption && st.captionText) graphics.push({
+        type: "text", left: autoGrid.left, bottom: 8,
+        style: { text: st.captionText,
+                 font: `${clamp(st.catLabelSize || 14, 11, 20)}px ${g.fontFamily}`,
+                 fill: st.catLabelColor || "#333333" }
+      });
       return {
         backgroundColor: st.bgColor,
         title: buildTitle(g, st, `单因子探测结果`),
         grid: buildGrid(st, autoGrid),
+        graphic: graphics,
         xAxis: horiz ? valAxis : catAxis,
         yAxis: horiz ? catAxis : valAxis,
         series: [{
@@ -357,36 +466,66 @@ const CHARTS = {
   interaction: {
     label: "交互探测热图",
     defaults(ctx) {
-      const cell = clamp(Math.round(100 - 3.2 * ctx.n), 46, 86);
-      return Object.assign(commonDefaults(ctx),
+      const m = heatmapMetrics(ctx.n);
+      const d = Object.assign(commonDefaults(ctx),
         axisDefaults("x", "cat", { xTickShow: false }),
         axisDefaults("y", "cat", { yTickShow: false }),
         {
+          autoSize: true,
           showValues: true, showSymbols: true,
           cellBorderWidth: 1.5, cellBorderColor: "#ffffff",
-          vmPos: "auto", vmX: 14, vmY: 18, vmLength: 0, vmWidth: 16,
+          labelMode: "axis", yReverse: false, xReverse: false,
+          diagHighlight: false, diagFill: "#c0392b", diagBorderColor: "#c0392b",
+          diagBorderWidth: 2.5, diagTextColor: "#ffffff", diagLabelSize: 0,
+          vmType: "piecewise", vmPieces: 7, vmGap: 0,
+          vmPos: "right", vmX: 14, vmY: 18, vmLength: 0, vmWidth: 18, vmOffsetX: 0, vmOffsetY: 0,
           frameShow: true, frameWidth: 1.2, frameColor: "#000000",
+          frameTop: true, frameRight: true, frameBottom: true, frameLeft: true,
           showCaption: true, captionText: "注：* 双因子增强，** 非线性增强",
-          width: ctx.n * cell + 250, height: ctx.n * cell + 170
+          palette: "蓝橙红(GD论文)",
+          titleSize: m.titleSize, labelSize: m.valueSize,
+          xLabelSize: m.labelSize, yLabelSize: m.labelSize, legendSize: clamp(m.labelSize - 1, 11, 18),
+          width: m.plot + 200, height: m.plot + 150
         });
+      return d;
     },
+    autoSize(ctx, st) { applyInteractionAutoSize(st, ctx.n); },
     schema: [
       ...SC_TITLE,
+      { k: "autoSize", label: "按因子数自适应画布/字号", t: "chk", g: "画布" },
+      { k: "labelMode", label: "变量标签模式", t: "sel", opts: [["坐标轴标签", "axis"], ["对角线旁标注", "diagonal"]], g: "图形" },
+      { k: "yReverse", label: "Y轴翻转(x1在顶/底)", t: "chk", g: "图形" },
+      { k: "xReverse", label: "X轴翻转(x1在左/右)", t: "chk", g: "图形" },
+      { k: "xLabelRotate", label: "X轴变量名旋转°", t: "num", min: -90, max: 90, g: "图形" },
       { k: "showValues", label: "显示 q 值", t: "chk", g: "数值标签" },
       { k: "showSymbols", label: "显示增强标记 (*/**)", t: "chk", g: "数值标签" },
       ...SC_LABEL,
       { k: "cellBorderWidth", label: "格子边框宽", t: "num", min: 0, max: 10, step: 0.5, g: "图形" },
       { k: "cellBorderColor", label: "格子边框色", t: "color", g: "图形" },
-      { k: "frameShow", label: "外边框(含上边框)", t: "chk", g: "图形" },
-      { k: "frameWidth", label: "外边框宽度", t: "num", min: 0.5, max: 6, step: 0.2, g: "图形" },
-      { k: "frameColor", label: "外边框颜色", t: "color", g: "图形" },
-      { k: "vmPos", label: "色标位置", t: "sel", opts: [["智能(空白三角区)", "auto"], ["右侧", "right"], ["底部", "bottom"], ["手动定位", "manual"]], g: "图例与色标" },
-      { k: "vmX", label: "手动: 水平位置(%)", t: "num", min: 0, max: 95, g: "图例与色标" },
-      { k: "vmY", label: "手动: 垂直位置(%)", t: "num", min: 0, max: 95, g: "图例与色标" },
-      { k: "vmLength", label: "色标长度(px, 0=自动)", t: "num", min: 0, max: 800, g: "图例与色标" },
+      { k: "diagHighlight", label: "高亮对角格(单因子)", t: "chk", g: "对角线" },
+      { k: "diagFill", label: "对角格填充色", t: "color", g: "对角线" },
+      { k: "diagBorderColor", label: "对角格边框色", t: "color", g: "对角线" },
+      { k: "diagBorderWidth", label: "对角格边框宽", t: "num", min: 0, max: 8, step: 0.5, g: "对角线" },
+      { k: "diagTextColor", label: "对角格数值色", t: "color", g: "对角线" },
+      { k: "diagLabelSize", label: "对角线标注字号(0=自动)", t: "num", min: 0, max: 40, g: "对角线" },
+      { k: "frameShow", label: "显示外边框", t: "chk", g: "边框" },
+      { k: "frameTop", label: "上边框", t: "chk", g: "边框" },
+      { k: "frameRight", label: "右边框", t: "chk", g: "边框" },
+      { k: "frameBottom", label: "下边框", t: "chk", g: "边框" },
+      { k: "frameLeft", label: "左边框", t: "chk", g: "边框" },
+      { k: "frameWidth", label: "边框宽度", t: "num", min: 0.5, max: 6, step: 0.2, g: "边框" },
+      { k: "frameColor", label: "边框颜色", t: "color", g: "边框" },
+      { k: "vmType", label: "色标类型", t: "sel", opts: [["连续渐变", "continuous"], ["分段(离散)", "piecewise"]], g: "图例与色标" },
+      { k: "vmPieces", label: "分段段数", t: "num", min: 3, max: 12, g: "图例与色标" },
+      { k: "vmPos", label: "色标位置", t: "sel", opts: [["右侧(对齐边框)", "right"], ["底部(横向)", "bottom"], ["智能(空白三角区)", "auto"], ["手动定位(%)", "manual"]], g: "图例与色标" },
+      { k: "vmOffsetX", label: "微调: 水平偏移(px)", t: "num", min: -600, max: 600, g: "图例与色标" },
+      { k: "vmOffsetY", label: "微调: 垂直偏移(px)", t: "num", min: -600, max: 600, g: "图例与色标" },
+      { k: "vmX", label: "手动定位: 水平(%)", t: "num", min: 0, max: 95, g: "图例与色标" },
+      { k: "vmY", label: "手动定位: 垂直(%)", t: "num", min: 0, max: 95, g: "图例与色标" },
+      { k: "vmLength", label: "色标长度(px, 0=随图)", t: "num", min: 0, max: 800, g: "图例与色标" },
       { k: "vmWidth", label: "色标宽度(px)", t: "num", min: 6, max: 60, g: "图例与色标" },
       ...SC_LEGEND,
-      ...axisSchema("x", "X 轴", "cat"),
+      ...axisSchema("x", "X 轴", "cat").filter(s => s.k !== "xLabelRotate"),
       ...axisSchema("y", "Y 轴", "cat"),
       ...SC_MARGIN,
       { k: "showCaption", label: "显示注释行", t: "chk", g: "注释" },
@@ -398,56 +537,105 @@ const CHARTS = {
       const res = payload.result;
       const vars = res.all_x, n = vars.length;
       const idx = {}; vars.forEach((v, i) => idx[v] = i);
+      const diagMode = st.labelMode === "diagonal";   // 对角线旁标注 → 隐藏两条坐标轴；坐标轴显隐由各自“显示整条坐标轴”控制
+      // data 单元：{ value:[col,row,q], sym, diag }
+      // 对角线模式把交互值放到另一侧三角，让对角格右侧留白以放标签（仿图1）
       const data = [];
-      res.factor.forEach(f => data.push([idx[f.variable], idx[f.variable], f.q ?? 0, ""]));
+      res.factor.forEach(f => data.push({ value: [idx[f.variable], idx[f.variable], f.q ?? 0], sym: "", diag: true }));
       res.interaction.forEach(r => {
-        const i = Math.max(idx[r.var1], idx[r.var2]), j = Math.min(idx[r.var1], idx[r.var2]);
+        const hi = Math.max(idx[r.var1], idx[r.var2]), lo = Math.min(idx[r.var1], idx[r.var2]);
+        const col = diagMode ? lo : hi, row = diagMode ? hi : lo;
         const sym = /nonlinear/i.test(r.type_en) && /enhance/i.test(r.type_en) ? "**" : (/bi/i.test(r.type_en) ? "*" : "");
-        data.push([i, j, r.q12 ?? 0, sym]);
+        data.push({ value: [col, row, r.q12 ?? 0], sym, diag: false });
       });
-      const qmax = Math.max(...data.map(d => d[2]));
+      const qmax = Math.max(...data.map(d => d.value[2]));
 
-      // ---- 绘图区几何（自动或手动边距，供智能色标 / 外边框使用） ----
-      const autoGrid = {
-        left: 90, right: st.vmPos === "right" ? 120 : 42,
-        top: st.titleShow ? st.titleSize + 42 : 28,
-        bottom: (st.vmPos === "bottom" ? 105 : 52) + (st.showCaption ? 28 : 0) + ((st.xLabelRotate || 0) > 25 ? 22 : 0)
-      };
-      const gr = buildGrid(st, autoGrid);
-      const LL = gr.left, RR = gr.right, TT = gr.top, BB = gr.bottom;
+      // ---- 绘图区几何（边距与自适应共用 imMargins，保证 plotW=n*cell） ----
+      const autoGrid = (st.marginAuto === false)
+        ? { left: st.gridLeft, right: st.gridRight, top: st.gridTop, bottom: st.gridBottom }
+        : imMargins(st, n);
+      const LL = autoGrid.left, RR = autoGrid.right, TT = autoGrid.top, BB = autoGrid.bottom;
       const plotW = st.width - LL - RR, plotH = st.height - TT - BB;
+      const cellW = plotW / n, cellH = plotH / n;
 
+      // ---- 颜色映射（隐藏 ECharts 自带图例，仅用于给格子上色；图例自绘） ----
+      const qMax = Math.ceil(qmax * 100) / 100;
       const vm = {
-        min: 0, max: Math.ceil(qmax * 100) / 100, calculable: true, precision: 2,
-        inRange: { color: paletteOf(st) }, textStyle: TS(g, st.legendSize, st.yLabelColor),
-        itemWidth: st.vmWidth
+        show: false, min: 0, max: qMax, inRange: { color: paletteOf(st) }
       };
-      const vmLen = st.vmLength > 0 ? st.vmLength : clamp(plotH * 0.42, 110, 380);
-      if (st.vmPos === "auto") {
-        Object.assign(vm, { left: LL + plotW * 0.05, top: TT + plotH * 0.05, orient: "vertical", itemHeight: Math.min(vmLen, plotH * 0.5) });
-      } else if (st.vmPos === "right") {
-        Object.assign(vm, { right: 12, top: "middle", orient: "vertical", itemHeight: vmLen });
-      } else if (st.vmPos === "bottom") {
-        Object.assign(vm, { bottom: st.showCaption ? 34 : 8, left: "center", orient: "horizontal", itemHeight: st.vmWidth, itemWidth: vmLen });
-      } else {
-        Object.assign(vm, { left: st.vmX + "%", top: st.vmY + "%", orient: "vertical", itemHeight: vmLen });
-      }
+      if (st.vmType === "piecewise") { vm.type = "piecewise"; vm.splitNumber = st.vmPieces; }
+      else { vm.calculable = true; }
 
       const graphics = [];
-      if (st.frameShow) graphics.push({
-        type: "rect", silent: true, z: 5,
-        shape: { x: LL, y: TT, width: plotW, height: plotH },
-        style: { fill: "none", stroke: st.frameColor, lineWidth: st.frameWidth }
-      });
+      // ---- 逐边框（可单独开关上/右/下/左）----
+      if (st.frameShow) {
+        const fs = { stroke: st.frameColor, lineWidth: st.frameWidth };
+        const L = LL, R = LL + plotW, T = TT, B = TT + plotH;
+        if (st.frameTop !== false)    graphics.push({ type: "line", silent: true, z: 5, shape: { x1: L, y1: T, x2: R, y2: T }, style: fs });
+        if (st.frameBottom !== false) graphics.push({ type: "line", silent: true, z: 5, shape: { x1: L, y1: B, x2: R, y2: B }, style: fs });
+        if (st.frameLeft !== false)   graphics.push({ type: "line", silent: true, z: 5, shape: { x1: L, y1: T, x2: L, y2: B }, style: fs });
+        if (st.frameRight !== false)  graphics.push({ type: "line", silent: true, z: 5, shape: { x1: R, y1: T, x2: R, y2: B }, style: fs });
+      }
+      // ---- 自绘无缝色标（位置随翻转/朝向自适应，并可用偏移微调）----
+      let cgeo;
+      if (st.vmPos === "bottom") {
+        const barW = st.vmLength > 0 ? st.vmLength : plotW;
+        cgeo = { x: LL + (plotW - barW) / 2, y: TT + plotH + 40, len: barW, thick: st.vmWidth, orient: "horizontal", min: 0, max: qMax };
+      } else if (st.vmPos === "right") {
+        const barH = st.vmLength > 0 ? st.vmLength : plotH;
+        cgeo = { x: LL + plotW + 18, y: TT + (plotH - barH) / 2, len: barH, thick: st.vmWidth, orient: "vertical", min: 0, max: qMax };
+      } else if (st.vmPos === "manual") {
+        const barH = st.vmLength > 0 ? st.vmLength : plotH * 0.6;
+        cgeo = { x: LL + plotW * (st.vmX / 100), y: TT + plotH * (st.vmY / 100), len: barH, thick: st.vmWidth, orient: "vertical", min: 0, max: qMax };
+      } else { // auto：放进空白三角区，只标首尾两个数值；按是否对角/翻转选空角
+        const barH = st.vmLength > 0 ? st.vmLength : plotH * 0.42;
+        // 空白角随 填充三角(对角与否) + X/Y 翻转 自适应
+        const rightSide = diagMode !== !!st.xReverse;   // X 翻转时水平镜像
+        const topSide = diagMode ? st.yReverse : !st.yReverse;
+        const cx = rightSide ? LL + plotW * 0.70 : LL + plotW * 0.04;
+        const cy = topSide ? TT + plotH * 0.06 : TT + plotH - barH - plotH * 0.06;
+        cgeo = { x: cx, y: cy, len: barH, thick: st.vmWidth, orient: "vertical", min: 0, max: qMax, endpointsOnly: true };
+      }
+      // 偏移微调（对所有位置生效）
+      cgeo.x += (st.vmOffsetX || 0); cgeo.y += (st.vmOffsetY || 0);
+      buildColorbar(g, st, cgeo).forEach(e => graphics.push(e));
+
       if (st.showCaption) graphics.push({
         type: "text", left: LL, bottom: 8,
         style: { text: st.captionText, font: `${st.legendSize}px ${g.fontFamily}`, fill: st.xLabelColor }
       });
+      // ---- 对角线旁变量标注（labelMode = diagonal）----
+      if (diagMode) {
+        const dsz = st.diagLabelSize > 0 ? st.diagLabelSize : clamp(st.xLabelSize, 11, 20);
+        const offRight = !st.xReverse;   // 标签朝向空白三角一侧
+        for (let i = 0; i < n; i++) {
+          const cx = st.xReverse ? (LL + plotW - (i + 0.5) * cellW) : (LL + (i + 0.5) * cellW);
+          const cy = st.yReverse ? (TT + (i + 0.5) * cellH) : (TT + plotH - (i + 0.5) * cellH);
+          graphics.push({
+            type: "text", z: 8,
+            left: offRight ? cx + cellW * 0.5 + 8 : cx - cellW * 0.5 - 8, top: cy,
+            style: { text: nm(vars[i]), textVerticalAlign: "middle", textAlign: offRight ? "left" : "right",
+                     font: `bold ${dsz}px ${g.fontFamily}`, fill: st.xLabelColor }
+          });
+        }
+      }
 
-      const xAxis = buildAxis(g, st, "x", { type: "category", data: vars.map(nm) });
+      // 坐标轴：axis 模式由各自“显示整条坐标轴”开关控制
+      // diagonal 模式：行变量用对角线旁标注，列变量改用底部 X 轴显示（另一组变量），Y 轴隐藏
+      const xAxis = buildAxis(g, st, "x", { type: "category", data: vars.map(nm), inverse: st.xReverse });
       xAxis.splitArea = { show: false };
-      const yAxis = buildAxis(g, st, "y", { type: "category", data: vars.map(nm) });
+      xAxis.axisLabel.interval = 0;   // 类目过密时也强制每个变量都显示
+      const yAxis = buildAxis(g, st, "y", { type: "category", data: vars.map(nm), inverse: st.yReverse });
       yAxis.splitArea = { show: false };
+      yAxis.axisLabel.interval = 0;
+      if (diagMode) {
+        yAxis.show = false;
+        xAxis.show = true;                       // 显示底部列变量名 = 交互的另一组变量
+        xAxis.axisLine = { show: false };        // 轴线由外边框负责，避免重复
+        xAxis.axisTick = { show: false };
+        xAxis.axisLabel = Object.assign({}, xAxis.axisLabel,
+          { show: true, interval: 0, rotate: st.xLabelRotate || 0 });
+      }
 
       return {
         backgroundColor: st.bgColor,
@@ -457,12 +645,19 @@ const CHARTS = {
         visualMap: vm,
         graphic: graphics,
         series: [{
-          type: "heatmap", data: data.map(d => ({ value: [d[0], d[1], d[2]], sym: d[3] })),
+          type: "heatmap", data: data.map(d => {
+            const o = { value: d.value, sym: d.sym, diag: d.diag };
+            if (d.diag && st.diagHighlight) {
+              o.itemStyle = { color: st.diagFill, borderColor: st.diagBorderColor, borderWidth: st.diagBorderWidth };
+              o.label = { color: st.diagTextColor, fontWeight: "bold" };
+            }
+            return o;
+          }),
           itemStyle: { borderColor: st.cellBorderColor, borderWidth: st.cellBorderWidth },
           label: {
             show: st.showValues,
             formatter: p => fmt(p.value[2], st.decimals) + (st.showSymbols && p.data.sym ? p.data.sym : ""),
-            ...TS(g, st.labelSize, st.labelColor)
+            color: st.labelColor, fontFamily: g.fontFamily, fontSize: st.labelSize
           },
           emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,.4)" } }
         }]
@@ -483,8 +678,8 @@ const CHARTS = {
           cols, hGap: 6, vGap: 11, sharedY: false,
           axisAuto: true, xName: "分级数", yName: "q 值",
           lineWidth: 2.2, symbolType: "circle", symbolSize: 7,
-          showBest: true, bestSymbol: "star", bestColor: "#e63536", bestSize: 16,
-          bestLabelMode: "label", bestLabelPos: "auto",
+          showBest: true, bestSymbol: "diamond", bestColor: "#000000", bestSize: 16,
+          bestLabelMode: "none", bestLabelPos: "auto",
           annotate: true, subTitleSize: 0, showLegend: true,
           width: clamp(cols * 360 + 60, 520, 2400), height: clamp(rows * 270 + 110, 420, 2600)
         });
@@ -715,8 +910,8 @@ const CHARTS = {
         axisDefaults("y", "val", { ySplitShow: true }),
         {
           cols, hGap: 6, vGap: 13, axisAuto: true,
-          colorMode: "single", barColor: "#0c5496",
-          barWidth: 70, barBorderWidth: 0.5, barBorderColor: "#333333",
+          colorMode: "single", barColor: "#cfcfcf",
+          barWidth: 70, barBorderWidth: 0.6, barBorderColor: "#7a7a7a",
           showValues: false, yName: "Y 均值", subTitleSize: 0,
           width: clamp(cols * 380 + 60, 560, 2600), height: clamp(rows * 290 + 100, 420, 2800)
         });
@@ -800,7 +995,10 @@ const CHARTS = {
         {
           method: "pearson", showValues: true, showSig: true, maskUpper: true,
           cellBorderWidth: 1.5, cellBorderColor: "#ffffff",
-          vmLength: 0, vmWidth: 16,
+          vmType: "continuous", vmPieces: 8,
+          vmPos: "right", vmX: 14, vmY: 18, vmLength: 0, vmWidth: 16, vmOffsetX: 0, vmOffsetY: 0,
+          frameShow: true, frameWidth: 1.2, frameColor: "#000000",
+          frameTop: true, frameRight: true, frameBottom: true, frameLeft: true,
           width: n * cell + 250, height: n * cell + 160
         });
     },
@@ -813,7 +1011,21 @@ const CHARTS = {
       { k: "showValues", label: "显示数值", t: "chk", g: "数值标签" },
       { k: "showSig", label: "显示显著性 (*)", t: "chk", g: "数值标签" },
       ...SC_LABEL,
-      { k: "vmLength", label: "色标长度(px, 0=自动)", t: "num", min: 0, max: 800, g: "图例与色标" },
+      { k: "frameShow", label: "显示外边框", t: "chk", g: "边框" },
+      { k: "frameTop", label: "上边框", t: "chk", g: "边框" },
+      { k: "frameRight", label: "右边框", t: "chk", g: "边框" },
+      { k: "frameBottom", label: "下边框", t: "chk", g: "边框" },
+      { k: "frameLeft", label: "左边框", t: "chk", g: "边框" },
+      { k: "frameWidth", label: "边框宽度", t: "num", min: 0.5, max: 6, step: 0.2, g: "边框" },
+      { k: "frameColor", label: "边框颜色", t: "color", g: "边框" },
+      { k: "vmType", label: "色标类型", t: "sel", opts: [["连续渐变", "continuous"], ["分段(离散)", "piecewise"]], g: "图例与色标" },
+      { k: "vmPieces", label: "分段段数", t: "num", min: 3, max: 12, g: "图例与色标" },
+      { k: "vmPos", label: "色标位置", t: "sel", opts: [["右侧(对齐边框)", "right"], ["底部(横向)", "bottom"], ["智能(空白三角区)", "auto"], ["手动定位(%)", "manual"]], g: "图例与色标" },
+      { k: "vmOffsetX", label: "微调: 水平偏移(px)", t: "num", min: -600, max: 600, g: "图例与色标" },
+      { k: "vmOffsetY", label: "微调: 垂直偏移(px)", t: "num", min: -600, max: 600, g: "图例与色标" },
+      { k: "vmX", label: "手动定位: 水平(%)", t: "num", min: 0, max: 95, g: "图例与色标" },
+      { k: "vmY", label: "手动定位: 垂直(%)", t: "num", min: 0, max: 95, g: "图例与色标" },
+      { k: "vmLength", label: "色标长度(px, 0=随图)", t: "num", min: 0, max: 800, g: "图例与色标" },
       { k: "vmWidth", label: "色标宽度(px)", t: "num", min: 6, max: 60, g: "图例与色标" },
       ...SC_LEGEND,
       ...axisSchema("x", "X 轴", "cat"),
@@ -833,22 +1045,53 @@ const CHARTS = {
         const r = co.r[i][j], p = co.p[i][j];
         data.push({ value: [j, i, r == null ? 0 : +(+r).toFixed(4)], p });
       }
-      const autoGrid = { left: 95, right: 105, top: st.titleShow ? st.titleSize + 40 : 30, bottom: (st.xLabelRotate || 0) > 25 ? 88 : 70 };
+      const autoGrid = { left: 95, right: st.vmPos === "right" ? 110 : 45, top: st.titleShow ? st.titleSize + 40 : 30, bottom: ((st.xLabelRotate || 0) > 25 ? 88 : 70) + (st.vmPos === "bottom" ? 50 : 0) };
       const gr = buildGrid(st, autoGrid);
-      const plotH = st.height - gr.top - gr.bottom;
+      const LL = gr.left, RR = gr.right, TT = gr.top, BB = gr.bottom;
+      const plotW = st.width - LL - RR, plotH = st.height - TT - BB;
+
+      const vm = { show: false, min: -1, max: 1, inRange: { color: paletteOf(st) } };
+      if (st.vmType === "piecewise") { vm.type = "piecewise"; vm.splitNumber = st.vmPieces; }
+      else { vm.calculable = true; }
+
+      const graphics = [];
+      if (st.frameShow) {
+        const fs = { stroke: st.frameColor, lineWidth: st.frameWidth };
+        const L = LL, R = LL + plotW, T = TT, B = TT + plotH;
+        if (st.frameTop !== false)    graphics.push({ type: "line", silent: true, z: 5, shape: { x1: L, y1: T, x2: R, y2: T }, style: fs });
+        if (st.frameBottom !== false) graphics.push({ type: "line", silent: true, z: 5, shape: { x1: L, y1: B, x2: R, y2: B }, style: fs });
+        if (st.frameLeft !== false)   graphics.push({ type: "line", silent: true, z: 5, shape: { x1: L, y1: T, x2: L, y2: B }, style: fs });
+        if (st.frameRight !== false)  graphics.push({ type: "line", silent: true, z: 5, shape: { x1: R, y1: T, x2: R, y2: B }, style: fs });
+      }
+      // 自绘无缝色标（-1~1）
+      let cgeo;
+      if (st.vmPos === "bottom") {
+        const barW = st.vmLength > 0 ? st.vmLength : plotW;
+        cgeo = { x: LL + (plotW - barW) / 2, y: TT + plotH + 42, len: barW, thick: st.vmWidth, orient: "horizontal", min: -1, max: 1 };
+      } else if (st.vmPos === "right") {
+        const barH = st.vmLength > 0 ? st.vmLength : plotH;
+        cgeo = { x: LL + plotW + 16, y: TT + (plotH - barH) / 2, len: barH, thick: st.vmWidth, orient: "vertical", min: -1, max: 1 };
+      } else if (st.vmPos === "manual") {
+        const barH = st.vmLength > 0 ? st.vmLength : plotH * 0.6;
+        cgeo = { x: LL + plotW * (st.vmX / 100), y: TT + plotH * (st.vmY / 100), len: barH, thick: st.vmWidth, orient: "vertical", min: -1, max: 1 };
+      } else { // auto：下三角时空白在右上，只标首尾
+        const barH = st.vmLength > 0 ? st.vmLength : plotH * 0.42;
+        cgeo = { x: LL + plotW * 0.70, y: TT + plotH * 0.06, len: barH, thick: st.vmWidth, orient: "vertical", min: -1, max: 1, endpointsOnly: true };
+      }
+      cgeo.x += (st.vmOffsetX || 0); cgeo.y += (st.vmOffsetY || 0);
+      buildColorbar(g, st, cgeo).forEach(e => graphics.push(e));
+
       const xAxis = buildAxis(g, st, "x", { type: "category", data: vars.map(nm) });
+      xAxis.splitArea = { show: false };
       const yAxis = buildAxis(g, st, "y", { type: "category", data: vars.map(nm), inverse: true });
+      yAxis.splitArea = { show: false };
       return {
         backgroundColor: st.bgColor,
         title: buildTitle(g, st, `${st.method === "pearson" ? "Pearson" : "Spearman"} 相关性`),
-        grid: gr,
+        grid: { left: LL, right: RR, top: TT, bottom: BB },
         xAxis, yAxis,
-        visualMap: {
-          min: -1, max: 1, precision: 2, calculable: true, orient: "vertical", right: 10, top: "middle",
-          inRange: { color: paletteOf(st) }, textStyle: TS(g, st.legendSize, st.xLabelColor),
-          itemWidth: st.vmWidth,
-          itemHeight: st.vmLength > 0 ? st.vmLength : clamp(plotH * 0.5, 140, 360)
-        },
+        visualMap: vm,
+        graphic: graphics,
         series: [{
           type: "heatmap", data,
           itemStyle: { borderColor: st.cellBorderColor, borderWidth: st.cellBorderWidth },

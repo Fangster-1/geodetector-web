@@ -23,6 +23,7 @@ body {
 }
 .brand { font-size: 18px; font-weight: 700; }
 .brand .sub { font-size: 12px; font-weight: 400; opacity: .85; margin-left: 12px; }
+.brand .author { font-size: 12px; font-weight: 400; opacity: .9; margin-left: 14px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,.35); }
 .server-status { font-size: 12px; padding: 4px 10px; border-radius: 12px; background: rgba(255,255,255,.18); }
 .server-status.ok { background: #27ae60; }
 .server-status.bad { background: #c0392b; }

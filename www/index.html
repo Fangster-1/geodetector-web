@@ -7,31 +7,14 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>地理探测器分析与制图平台</title>
-<link rel="stylesheet" href="css/style.css?v=9">
+<link rel="stylesheet" href="css/style.css?v=18">
 <script src="lib/echarts.min.js"></script>
 <script src="lib/jszip.min.js"></script>
 </head>
 <body>
 
-<!-- ============ 激活遮罩（未授权时显示，锁定整个应用） ============ -->
-<div id="licenseGate" class="lic-gate" style="display:none">
-  <div class="lic-card">
-    <h2>🔒 软件激活</h2>
-    <p class="lic-desc">本软件采用一机一码授权，需激活后使用。请将下方<b>机器码</b>发送给作者获取<b>激活码</b>。</p>
-    <label class="lic-label">本机机器码（点击复制）</label>
-    <div class="lic-mc" id="licMachineCode" title="点击复制">加载中…</div>
-    <label class="lic-label">激活码</label>
-    <textarea id="licActInput" class="lic-input" rows="3" placeholder="粘贴作者发来的激活码（分隔符可有可无）"></textarea>
-    <div class="lic-row">
-      <button class="btn btn-primary" id="licActivateBtn">激活</button>
-      <span id="licMsg" class="lic-msg"></span>
-    </div>
-    <p class="lic-foot">激活码与本机绑定，换电脑或重装系统需重新获取。</p>
-  </div>
-</div>
-
 <header class="topbar">
-  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化 · v9</span></div>
+  <div class="brand">🌍 地理探测器分析与制图平台 <span class="sub">OPGD · 因子/交互/生态/风险探测 · 离散化寻优可视化 · v18</span><span class="author">作者：方庆坪　　联系方式（微信同号）：19988312343</span></div>
   <div id="serverStatus" class="server-status">连接中…</div>
 </header>
 
@@ -160,9 +143,10 @@
         </div>
         <label class="lbl" style="margin-top:10px">最大样本量（超出随机抽样）</label>
         <input type="number" id="maxSample" class="inp" value="100000" step="1000">
-        <label class="lbl" style="margin-top:10px">离散化寻优抽样上限</label>
+        <label class="lbl" style="margin-top:10px">离散化寻优抽样</label>
+        <label><input type="checkbox" id="discEnable" checked> 启用抽样加速（默认）</label>
         <input type="number" id="discSample" class="inp" value="50000" step="5000" min="1000">
-        <p class="hint">natural(Jenks) 等方法对大样本极慢。样本超过此值时，先抽样寻找最优断点，再将断点应用到全量数据探测，结果几乎不受影响。</p>
+        <p class="hint"><b>✅ 启用（默认，上限 50000）：</b>样本超过上限时，先随机抽样寻找最优分级断点，再把断点应用到<b>全量数据</b>计算 q 值。速度快很多，q 值几乎不受影响，推荐。<br><b>⛔ 不启用：</b>直接用<b>全部样本</b>做 natural(Jenks) 等寻优，结果最精确，但几万行时会非常慢（可达数分钟甚至更久）。取消勾选即为不抽样。</p>
       </div>
       <div>
         <label class="lbl">数据选项</label>
@@ -253,7 +237,7 @@
 </main>
 
 <script src="lib/xlsx.full.min.js"></script>
-<script src="js/charts.js?v=9"></script>
-<script src="js/app.js?v=9"></script>
+<script src="js/charts.js?v=18"></script>
+<script src="js/app.js?v=18"></script>
 </body>
 </html>

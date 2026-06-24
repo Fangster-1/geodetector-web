@@ -5,14 +5,9 @@
 
 # APP_ROOT 由 run_app.R 在启动时注入全局环境
 source(file.path(APP_ROOT, "api", "core.R"), encoding = "UTF-8")
-source(file.path(APP_ROOT, "license", "license.R"), encoding = "UTF-8")
 
-# 计算类接口的授权守卫：未激活时拒绝
-.require_license <- function() {
-  if (!lic_is_activated())
-    return(list(ok = FALSE, locked = TRUE, error = "软件未激活，请在激活页输入激活码。"))
-  NULL
-}
+# 授权/机器锁已停用：守卫为空操作（保留调用点便于将来需要时再启用）
+.require_license <- function() NULL
 
 # 内存数据仓库：存放已上传解析的数据表 + 后台计算任务
 STORE <- new.env()
@@ -20,6 +15,8 @@ STORE$files <- list()
 STORE$jobs <- list()
 STORE$last_hb <- NULL       # 最近一次浏览器心跳时间
 STORE$hb_timeout <- 90      # 秒：超过此时长收不到心跳则自动停止后端
+# 每次启动生成唯一缓存指纹：注入到前端 JS/CSS 的 ?v=，确保重启后浏览器必拉新代码
+STORE$boot_nonce <- format(Sys.time(), "%Y%m%d%H%M%S")
                             # （设 >60s 以兼容浏览器对后台标签页的 setInterval 节流）
 
 # ---- 心跳看门狗：浏览器全部关闭后自动停止后端服务 ----
@@ -46,14 +43,16 @@ function(req, res) {
   plumber::forward()
 }
 
-#* 首页（显式提供 index.html 并禁缓存，彻底避免浏览器加载旧页面）
+#* 首页（显式提供 index.html 并禁缓存；把 JS/CSS 的 ?v= 替换为本次启动指纹，
+#*   保证每次重启后端浏览器都强制拉取最新代码，彻底杜绝“回到旧版本”）
 #* @get /
 #* @get /index.html
 #* @serializer html
 function(res) {
   res$setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-  paste(readLines(file.path(APP_ROOT, "www", "index.html"), warn = FALSE, encoding = "UTF-8"),
-        collapse = "\n")
+  html <- paste(readLines(file.path(APP_ROOT, "www", "index.html"), warn = FALSE, encoding = "UTF-8"),
+                collapse = "\n")
+  gsub("\\?v=[0-9]+", paste0("?v=", STORE$boot_nonce), html)
 }
 
 #* 健康检查
@@ -65,19 +64,6 @@ function() list(ok = TRUE, time = format(Sys.time()))
 #* @get /api/heartbeat
 #* @serializer unboxedJSON
 function() { STORE$last_hb <- Sys.time(); list(ok = TRUE) }
-
-#* 授权状态（机器码 + 是否已激活）
-#* @get /api/license
-#* @serializer unboxedJSON
-function() lic_status()
-
-#* 提交激活码
-#* @post /api/activate
-#* @serializer unboxedJSON
-function(req) {
-  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
-  lic_activate(body$code)
-}
 
 #* 上传文件（JSON: {files: [{name, b64}]}），解析并缓存
 #* @post /api/upload

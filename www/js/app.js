@@ -88,40 +88,6 @@ function markStepDone(page) {
   if (el) el.classList.add("done");
 }
 
-/* ---------------- 软件激活（授权门禁） ---------------- */
-async function checkLicense() {
-  let st;
-  try { st = await fetch("/api/license").then(x => x.json()); }
-  catch (e) { return; }   // 服务未起时由 ping 处理
-  if (st.activated) { $("#licenseGate").style.display = "none"; return; }
-  // 未激活：显示遮罩
-  $("#licMachineCode").textContent = st.machine_display || "采集失败";
-  $("#licenseGate").style.display = "flex";
-}
-$("#licMachineCode").onclick = () => {
-  const t = $("#licMachineCode").textContent;
-  navigator.clipboard && navigator.clipboard.writeText(t).then(
-    () => { const m = $("#licMsg"); m.textContent = "机器码已复制"; m.className = "lic-msg ok"; },
-    () => {});
-};
-$("#licActivateBtn").onclick = async () => {
-  const code = $("#licActInput").value.trim();
-  const msg = $("#licMsg");
-  if (!code) { msg.textContent = "请粘贴激活码"; msg.className = "lic-msg err"; return; }
-  $("#licActivateBtn").disabled = true; msg.textContent = "验证中…"; msg.className = "lic-msg";
-  try {
-    const r = await fetch("/api/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }).then(x => x.json());
-    if (r.ok && r.activated) {
-      msg.textContent = "✓ 激活成功，正在进入…"; msg.className = "lic-msg ok";
-      setTimeout(() => { $("#licenseGate").style.display = "none"; }, 700);
-    } else {
-      msg.textContent = "✗ " + (r.error || "激活失败"); msg.className = "lic-msg err";
-    }
-  } catch (e) { msg.textContent = "✗ 网络错误：" + e.message; msg.className = "lic-msg err"; }
-  $("#licActivateBtn").disabled = false;
-};
-checkLicense();
-
 /* ---------------- 服务器状态 ---------------- */
 (async function ping() {
   try {
@@ -606,9 +572,17 @@ function getRunParams() {
     methods, intervals,
     remove_zero_y: $("#removeZeroY").checked,
     max_sample: +$("#maxSample").value || 100000,
-    disc_sample: +$("#discSample").value || 50000
+    // 不启用抽样 → 传 0，后端按全量数据寻优
+    disc_sample: $("#discEnable").checked ? (+$("#discSample").value || 50000) : 0
   };
 }
+// 抽样开关：未勾选时灰化上限输入框
+(function wireDiscEnable() {
+  const cb = $("#discEnable"), inp = $("#discSample");
+  if (!cb || !inp) return;
+  const sync = () => { inp.disabled = !cb.checked; };
+  cb.onchange = sync; sync();
+})();
 function log(msg) {
   const el = $("#runLog");
   el.textContent += `\n[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -741,7 +715,10 @@ function ensureStyles(type, ctx) {
     const d = CHARTS[type].defaults(ctx);
     for (const k in d) if (!(k in S.style.perChart[type])) S.style.perChart[type][k] = d[k];
   }
-  return { g: S.style.global, st: S.style.perChart[type] };
+  const st = S.style.perChart[type];
+  // 按因子数自适应画布/字号（图表自带 autoSize 且未关闭时）
+  if (typeof CHARTS[type].autoSize === "function" && st.autoSize !== false) CHARTS[type].autoSize(ctx, st);
+  return { g: S.style.global, st };
 }
 
 function renderChart() {
@@ -930,11 +907,14 @@ function initVarNameCtrls() {
   });
 }
 
-/* 样式持久化（v3：坐标轴系统全面升级，启用新键避免旧缓存冲突） */
-function saveStyle() { try { localStorage.setItem("gd_style_v3", JSON.stringify(S.style)); } catch (e) { } }
+/* 样式持久化（v4：交互热图色带/自适应升级，换键丢弃旧样式避免“图表回到旧版” ） */
+const STYLE_KEY = "gd_style_v5";
+function saveStyle() { try { localStorage.setItem(STYLE_KEY, JSON.stringify(S.style)); } catch (e) { } }
 (function loadStyle() {
   try {
-    const s = JSON.parse(localStorage.getItem("gd_style_v3"));
+    // 清理历史版本，避免旧样式覆盖新默认
+    ["gd_style", "gd_style_v2", "gd_style_v3", "gd_style_v4"].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    const s = JSON.parse(localStorage.getItem(STYLE_KEY));
     if (s && s.global) S.style = s;
   } catch (e) { }
 })();
@@ -955,7 +935,7 @@ function buildExportURL(type, payload, st, g) {
   if (g.exportFormat === "svg") {
     url = ch.getDataURL({ type: "svg" });
   } else {
-    url = ch.getDataURL({ type: g.exportFormat, pixelRatio: g.pixelRatio || 3, backgroundColor: st.bgColor || "#fff" });
+    url = ch.getDataURL({ type: g.exportFormat, pixelRatio: dpiToRatio(g), backgroundColor: st.bgColor || "#fff" });
   }
   ch.dispose();
   host.removeChild(div);
